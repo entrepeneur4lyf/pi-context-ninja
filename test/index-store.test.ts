@@ -14,18 +14,18 @@ describe("index-store", () => {
       turnRange: "1-5",
       topic: "setup",
       summary: "initial setup",
-      timestamp: "2026-04-14T18:00:00.000Z",
+      timestamp: Date.now(),
       messageCount: 5,
-      indexedAt: "2026-04-14T18:05:00.000Z",
+      indexedAt: Date.now(),
     });
 
     appendIndexEntry(filePath, {
       turnRange: "6-9",
       topic: "auth",
       summary: "authentication changes",
-      timestamp: "2026-04-14T18:06:00.000Z",
+      timestamp: Date.now(),
       messageCount: 4,
-      indexedAt: "2026-04-14T18:10:00.000Z",
+      indexedAt: Date.now(),
     });
 
     const entries = readIndexEntries(filePath);

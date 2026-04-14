@@ -1,4 +1,3 @@
-import type { ExtensionContext } from "@mariozechner/pi-agent-core";
 import type { SessionState, OmitRange } from "../types.js";
 import fs from "node:fs";
 import path from "node:path";
@@ -26,8 +25,12 @@ interface SessionManagerLike {
   getCurrentEntry?: () => SessionEntryLike | null | undefined;
 }
 
-export function resolveSessionId(ctx: ExtensionContext): string {
-  const sessionManager = (ctx as ExtensionContext & { sessionManager?: SessionManagerLike }).sessionManager;
+interface ExtensionContextLike {
+  sessionManager?: SessionManagerLike;
+}
+
+export function resolveSessionId(ctx: ExtensionContextLike): string {
+  const sessionManager = ctx.sessionManager;
   const entry = sessionManager?.getCurrentEntry?.();
   return entry?.id ?? entry?.path ?? "default";
 }

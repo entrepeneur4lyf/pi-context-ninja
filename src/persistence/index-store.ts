@@ -5,9 +5,9 @@ export interface IndexEntry {
   turnRange: string;
   topic: string;
   summary: string;
-  timestamp: string;
+  timestamp: number;
   messageCount: number;
-  indexedAt: string;
+  indexedAt: number;
 }
 
 export function appendIndexEntry(filePath: string, entry: IndexEntry): void {
