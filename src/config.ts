@@ -1,5 +1,6 @@
 import fs from "fs";
-import { load as yamlLoad } from "js-yaml";
+import yaml from "js-yaml";
+const yamlLoad = yaml.load;
 
 export interface ShortCircuitConfig {
   enabled: boolean;
