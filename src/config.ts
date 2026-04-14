@@ -1,6 +1,5 @@
 import fs from "fs";
-import yaml from "js-yaml";
-const yamlLoad = yaml.load;
+import YAML from "yaml";
 
 export interface ShortCircuitConfig {
   enabled: boolean;
@@ -170,7 +169,7 @@ export function loadConfig(configPath: string): PCNConfig {
   }
 
   const raw = fs.readFileSync(configPath, "utf-8");
-  const parsed = yamlLoad(raw) as Record<string, unknown>;
+  const parsed = YAML.parse(raw) as Record<string, unknown>;
   return deepMerge(defaults as Record<string, unknown>, parsed) as PCNConfig;
 }
 
