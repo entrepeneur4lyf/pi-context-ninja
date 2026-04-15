@@ -243,6 +243,60 @@ describe("runtime hook registration", () => {
     });
   });
 
+  it("caps native compaction summaries to a compact size", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = false;
+    config.dashboard.enabled = false;
+    config.backgroundIndexing.enabled = true;
+    config.nativeCompactionIntegration.enabled = true;
+    config.nativeCompactionIntegration.fallbackOnFailure = true;
+    config.nativeCompactionIntegration.maxContextSize = 1000;
+
+    const projectPath = "/tmp/project";
+    const entries = Array.from({ length: 120 }, (_, index) =>
+      buildIndexEntry(index * 10, index * 10 + 9, `topic-${index}-${"x".repeat(80)}`, 10),
+    );
+    for (const entry of entries) {
+      appendIndexEntry(getIndexPath(projectPath), entry);
+    }
+
+    const { calls, pi } = createPiMock();
+    createExtensionRuntime(pi, config);
+
+    const handler = calls.get("session_before_compact");
+    const ctx = {
+      cwd: projectPath,
+      sessionManager: {
+        getSessionId: () => "session-compact-cap",
+        getEntries: () => [{ id: "m1" }, { id: "m2" }, { id: "m3" }],
+      },
+      getContextUsage: () => ({ tokens: 4096, percent: 0.5, contextWindow: 8192 }),
+    } as any;
+    const result = await handler?.(
+      {
+        type: "session_before_compact",
+        preparation: {
+          firstKeptEntryId: "entry-21",
+          messagesToSummarize: [],
+          turnPrefixMessages: [],
+          isSplitTurn: false,
+          tokensBefore: 4096,
+          fileOps: {},
+          settings: {},
+        },
+        branchEntries: [],
+        signal: new AbortController().signal,
+      },
+      ctx,
+    );
+
+    const summary = (result as { compaction?: { summary?: string } } | undefined)?.compaction?.summary ?? "";
+    expect(summary).toBeTruthy();
+    expect(summary?.length).toBeLessThanOrEqual(4096);
+    expect(summary).toContain("completed phase(s) indexed");
+    expect(summary).toContain("..."); // truncation marker
+  });
+
   it("cancels native compaction when the index is unavailable and fallbackOnFailure is disabled", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;

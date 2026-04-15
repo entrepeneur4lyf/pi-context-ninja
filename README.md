@@ -92,7 +92,7 @@ The compression pipeline applies six strategies in order to each tool result mes
 
 ## Dashboard
 
-The analytics dashboard is optional observability. It visualizes exact Pi context usage, approximate savings, turn history, and strategy effectiveness.
+The analytics dashboard is optional observability. It shows the current session's exact Pi context percentage, approximate tokens kept out, turn count, and a live event log.
 
 ```
 http://127.0.0.1:48900

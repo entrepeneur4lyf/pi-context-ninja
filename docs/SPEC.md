@@ -440,22 +440,14 @@ follow Pi runtime/session semantics.
 
 Node `http` server, localhost only.
 
-Suggested events:
-- `hello`
-- `ping`
-- `turn`
-- `tool`
-- `session_end`
-
-Panels:
-- current session saved tokens / context % / turns
-- lifetime totals
-- per-strategy bars
-- recent sessions
+Current shipped view:
+- current session exact context percentage
+- approximate tokens kept out
+- turn count
 - live event log
 
 Pi-specific note:
-- dashboard cards should display exact context usage separately from approximate savings
+- exact context usage should stay separate from approximate savings in both dashboard copy and analytics rows
 - do not invent Hermes phantom-session heuristics unless Pi actually exhibits equivalent noise
 - if Pi auxiliary flows do create low-signal sessions or events, filter them based on evidence, not cargo-culted Hermes thresholds
 
