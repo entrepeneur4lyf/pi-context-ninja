@@ -81,6 +81,8 @@ export interface PCNConfig {
   nativeCompactionIntegration: NativeCompactionIntegrationConfig;
 }
 
+type PlainObject = Record<string, unknown>;
+
 export function defaultConfig(): PCNConfig {
   return {
     strategies: {
@@ -141,12 +143,16 @@ export function defaultConfig(): PCNConfig {
   };
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
+function isPlainObject(value: unknown): value is PlainObject {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
-  const result: Record<string, unknown> = { ...target };
+function asPlainObject<T extends object>(value: T): T & PlainObject {
+  return value as T & PlainObject;
+}
+
+function deepMerge<T extends PlainObject>(target: T, source: PlainObject): T {
+  const result: PlainObject = { ...target };
   for (const key of Object.keys(source)) {
     const sourceValue = source[key];
     const targetValue = target[key];
@@ -156,7 +162,7 @@ function deepMerge(target: Record<string, unknown>, source: Record<string, unkno
       result[key] = sourceValue;
     }
   }
-  return result;
+  return result as T;
 }
 
 export function loadConfig(configPath: string): PCNConfig {
@@ -167,8 +173,12 @@ export function loadConfig(configPath: string): PCNConfig {
   }
 
   const raw = fs.readFileSync(configPath, "utf-8");
-  const parsed = YAML.parse(raw) as Record<string, unknown>;
-  return deepMerge(defaults as unknown as Record<string, unknown>, parsed) as unknown as PCNConfig;
+  const parsed: unknown = YAML.parse(raw);
+  if (!isPlainObject(parsed)) {
+    return defaults;
+  }
+
+  return deepMerge(asPlainObject(defaults), parsed);
 }
 
 export function loadRuntimeConfig(): PCNConfig {

@@ -10,17 +10,44 @@ describe("config", () => {
     expect(config.systemHint.enabled).toBe(true);
     expect(config.nativeCompactionIntegration.enabled).toBe(false);
     expect(config.backgroundIndexing.enabled).toBe(true);
+    expect(config.strategies.shortCircuit.minTokens).toBe(8000);
+    expect(config.strategies.codeFilter.maxBodyLines).toBe(200);
+    expect(config.strategies.codeFilter.keepImports).toBe(true);
+    expect(config.strategies.deduplication.maxOccurrences).toBe(2);
   });
+
   it("loads and overrides from YAML", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-"));
     const cfgPath = path.join(tmpDir, "config.yaml");
-    fs.writeFileSync(cfgPath, "systemHint:\n  enabled: false\ntruncation:\n  headLines: 50\n");
-    const config = loadConfig(cfgPath);
-    expect(config.systemHint.enabled).toBe(false);
-    expect(config.truncation.headLines).toBe(50);
-    expect(config.nativeCompactionIntegration.enabled).toBe(false);
-    fs.rmSync(tmpDir, { recursive: true });
+    try {
+      fs.writeFileSync(
+        cfgPath,
+        [
+          "systemHint:",
+          "  enabled: false",
+          "strategies:",
+          "  shortCircuit:",
+          "    minTokens: 1234",
+          "  codeFilter:",
+          "    maxBodyLines: 88",
+          "    keepImports: false",
+          "  deduplication:",
+          "    maxOccurrences: 7",
+        ].join("\n"),
+      );
+
+      const config = loadConfig(cfgPath);
+      expect(config.systemHint.enabled).toBe(false);
+      expect(config.strategies.shortCircuit.minTokens).toBe(1234);
+      expect(config.strategies.codeFilter.maxBodyLines).toBe(88);
+      expect(config.strategies.codeFilter.keepImports).toBe(false);
+      expect(config.strategies.deduplication.maxOccurrences).toBe(7);
+      expect(config.nativeCompactionIntegration.enabled).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
+
   it("defaultConfig has all blocks", () => {
     const d = defaultConfig();
     expect(d.strategies.shortCircuit).toBeDefined();
