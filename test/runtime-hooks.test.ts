@@ -17,6 +17,11 @@ async function loadStateStore() {
   return import("../src/persistence/state-store");
 }
 
+function writeLegacyState(sessionId: string, state: Record<string, unknown>): void {
+  const statePath = path.join(stateDir, `${encodeURIComponent(sessionId)}.json`);
+  fs.writeFileSync(statePath, JSON.stringify(state), "utf8");
+}
+
 function createPiMock() {
   const calls = new Map<string, (...args: unknown[]) => unknown>();
   const pi = {
@@ -267,7 +272,7 @@ describe("runtime hook registration", () => {
     expect(persisted?.omitRanges).toEqual([]);
   });
 
-  it("does not create new broad pruning when no tool results are available", async () => {
+  it("skips error tool results when generating prune targets", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;
     config.dashboard.enabled = false;
@@ -277,13 +282,30 @@ describe("runtime hook registration", () => {
     const { calls, pi } = createPiMock();
     createExtensionRuntime(pi, config);
 
-    const ctx = createContext("session-no-tool-results");
+    const ctx = createContext("session-error-result");
+
+    calls.get("tool_call")?.(
+      {
+        toolCallId: "read-error",
+        toolName: "read",
+        input: { path: "README.md" },
+      },
+      ctx,
+    );
 
     await calls.get("turn_end")?.(
       {
-        turnIndex: 3,
+        turnIndex: 6,
         message: { role: "assistant", content: "done" },
-        toolResults: [],
+        toolResults: [
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "boom" }],
+            toolName: "read",
+            isError: true,
+            toolCallId: "read-error",
+          },
+        ],
       },
       ctx,
     );
@@ -293,16 +315,114 @@ describe("runtime hook registration", () => {
         messages: [
           { role: "user", content: [{ type: "text", text: "show me the file" }] },
           { role: "assistant", content: "running read" },
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "boom" }],
+            toolName: "read",
+            isError: true,
+            toolCallId: "read-error",
+          },
         ],
       },
       ctx,
     );
 
     const { loadSessionState } = await loadStateStore();
-    const persisted = loadSessionState("session-no-tool-results");
+    const persisted = loadSessionState("session-error-result");
     expect(persisted?.pruneTargets).toEqual([]);
     expect(persisted?.omitRanges).toEqual([]);
     expect(readIndexEntries(getIndexPath("/tmp/project"))).toEqual([]);
+  });
+
+  it("backfills prune targets when only legacy omit ranges are present", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = false;
+    config.dashboard.enabled = false;
+    config.backgroundIndexing.enabled = true;
+    config.backgroundIndexing.minRangeTurns = 1;
+
+    const sessionId = "session-legacy-omit";
+    writeLegacyState(sessionId, {
+      omitRanges: [
+        {
+          startTurn: 0,
+          endTurn: 3,
+          startOffset: 0,
+          endOffset: 3,
+          indexedAt: 1,
+          summaryRef: "0-3",
+          messageCount: 4,
+        },
+      ],
+      pruneTargets: [],
+      toolCalls: [],
+      prunedToolIds: [],
+      tokensKeptOutTotal: 0,
+      tokensSaved: 0,
+      tokensKeptOutByType: {},
+      tokensSavedByType: {},
+      currentTurn: 0,
+      countedSavingsIds: [],
+      turnHistory: [],
+      projectPath: "/tmp/project",
+      lastContextTokens: null,
+      lastContextPercent: null,
+      lastContextWindow: null,
+    });
+
+    const { calls, pi } = createPiMock();
+    createExtensionRuntime(pi, config);
+
+    const ctx = createContext(sessionId);
+
+    calls.get("tool_call")?.(
+      {
+        toolCallId: "read-legacy",
+        toolName: "read",
+        input: { path: "README.md" },
+      },
+      ctx,
+    );
+
+    await calls.get("turn_end")?.(
+      {
+        turnIndex: 6,
+        message: { role: "assistant", content: "done" },
+        toolResults: [
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "long file body" }],
+            toolName: "read",
+            isError: false,
+            toolCallId: "read-legacy",
+          },
+        ],
+      },
+      ctx,
+    );
+
+    await calls.get("agent_end")?.(
+      {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "show me the file" }] },
+          { role: "assistant", content: "running read" },
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "long file body" }],
+            toolName: "read",
+            isError: false,
+            toolCallId: "read-legacy",
+          },
+        ],
+      },
+      ctx,
+    );
+
+    const { loadSessionState } = await loadStateStore();
+    const persisted = loadSessionState(sessionId);
+    expect(persisted?.pruneTargets).toHaveLength(1);
+    expect(persisted?.omitRanges).toHaveLength(1);
+    expect(readIndexEntries(getIndexPath("/tmp/project"))).toHaveLength(1);
   });
 
   it("returns a native compaction result from the indexed TOC when enabled", async () => {

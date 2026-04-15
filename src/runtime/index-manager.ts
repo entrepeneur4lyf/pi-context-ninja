@@ -17,10 +17,7 @@ export function refreshRangeIndex(
     return [];
   }
 
-  const lastIndexedTurn = Math.max(
-    state.pruneTargets.at(-1)?.turnIndex ?? -1,
-    state.omitRanges.at(-1)?.endTurn ?? -1,
-  );
+  const lastIndexedTurn = state.pruneTargets.at(-1)?.turnIndex ?? -1;
   const stale = selectStaleRanges(
     state.currentTurn,
     lastIndexedTurn,
@@ -33,7 +30,13 @@ export function refreshRangeIndex(
 
   const toolResults = messages.filter(isToolResultMessage).filter((message) => {
     const record = state.toolCalls.get(message.toolCallId);
-    return record !== undefined && record.turnIndex >= stale.startTurn && record.turnIndex <= stale.endTurn;
+    return (
+      record !== undefined &&
+      !record.isError &&
+      !(message as any).isError &&
+      record.turnIndex >= stale.startTurn &&
+      record.turnIndex <= stale.endTurn
+    );
   });
 
   if (toolResults.length === 0) {
