@@ -13,7 +13,7 @@ pre#events{background:#1a1a1a;padding:1rem;border-radius:8px;max-height:300px;ov
 <h1>Pi Context Ninja</h1>
 <div class="stats">
   <div class="stat"><div id="ctx-pct" class="val">--%</div><div class="label">Context</div></div>
-  <div class="stat"><div id="saved" class="val">--</div><div class="label">Tokens Saved</div></div>
+  <div class="stat"><div id="kept-out" class="val">--</div><div class="label">Tokens Kept Out</div></div>
   <div class="stat"><div id="turns" class="val">--</div><div class="label">Turns</div></div>
 </div>
 <h2>Live Events</h2>
@@ -28,7 +28,7 @@ source.onmessage=(event)=>{
   if(payload.type==='snapshot'){
     const d=payload.data;
     if(d?.context?.percent!=null)document.getElementById('ctx-pct').textContent=(d.context.percent*100).toFixed(1)+'%';
-    if(d?.totals?.tokensKeptOutApprox!=null)document.getElementById('saved').textContent=d.totals.tokensKeptOutApprox.toLocaleString();
+    if(d?.totals?.tokensKeptOutApprox!=null)document.getElementById('kept-out').textContent=d.totals.tokensKeptOutApprox.toLocaleString();
     if(d?.totalTurns!=null)document.getElementById('turns').textContent=d.totalTurns.toLocaleString();
   }
 };

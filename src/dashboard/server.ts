@@ -39,8 +39,10 @@ export function startDashboardServer(
   const clients = new Set<SseClient>();
   let latestSnapshot: AnalyticsSnapshot | null = null;
   let resolveReady: (() => void) | null = null;
-  const ready = new Promise<void>((resolve) => {
+  let rejectReady: ((error: Error) => void) | null = null;
+  const ready = new Promise<void>((resolve, reject) => {
     resolveReady = resolve;
+    rejectReady = reject;
   });
 
   const server = http.createServer((req: IncomingMessage, res: ServerResponse) => {
@@ -76,6 +78,12 @@ export function startDashboardServer(
     res.end("Not found");
   });
 
+  server.once("error", (error: Error) => {
+    rejectReady?.(error);
+    resolveReady = null;
+    rejectReady = null;
+  });
+
   server.listen(options.port, options.host, () => {
     const address = server.address();
     const bound =
@@ -85,6 +93,7 @@ export function startDashboardServer(
     console.log(`[PCN] Dashboard at http://${bound}`);
     resolveReady?.();
     resolveReady = null;
+    rejectReady = null;
   });
 
   return {

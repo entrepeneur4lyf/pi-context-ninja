@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import http from "node:http";
 import { once } from "node:events";
 import { createExtensionRuntime } from "../src/runtime/create-extension-runtime.js";
 import { defaultConfig } from "../src/config.js";
@@ -37,6 +38,8 @@ describe("dashboard server", () => {
       const html = await fetch(`${baseUrl}/`).then((res) => res.text());
       expect(html).toContain("Pi Context Ninja");
       expect(html).toContain("EventSource('/events')");
+      expect(html).toContain("Tokens Kept Out");
+      expect(html).not.toContain("Tokens Saved");
 
       const response = await fetch(`${baseUrl}/events`);
       const reader = response.body?.getReader();
@@ -74,6 +77,88 @@ describe("dashboard server", () => {
     } finally {
       await server.close();
     }
+  });
+
+  it("reuses one dashboard instance across session runtimes on the same port", async () => {
+    const probe = http.createServer();
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+    const address = probe.address();
+    if (!address || typeof address === "string") {
+      throw new Error("expected a bound probe port");
+    }
+    const port = address.port;
+    await new Promise<void>((resolve, reject) => probe.close((error) => (error ? reject(error) : resolve())));
+
+    const config = defaultConfig();
+    config.analytics.enabled = true;
+    config.analytics.dbPath = path.join(tmpDir, "analytics-shared.sqlite");
+    config.dashboard.enabled = true;
+    config.dashboard.port = port;
+    config.dashboard.bindHost = "127.0.0.1";
+
+    const callsA = new Map<string, (...args: any[]) => unknown>();
+    const piA = {
+      on: vi.fn((name: string, handler: (...args: any[]) => unknown) => {
+        callsA.set(name, handler);
+      }),
+    } as unknown as ExtensionAPI;
+    createExtensionRuntime(piA, config);
+
+    const ctxA = {
+      cwd: "/tmp/project-a",
+      sessionManager: {
+        getSessionId: () => "session-a",
+        getEntries: () => [{ id: "m1" }, { id: "m2" }, { id: "m3" }],
+      },
+      getContextUsage: () => ({ tokens: 420, percent: 0.42, contextWindow: 1000 }),
+    } as any;
+
+    await expect(
+      callsA.get("turn_end")?.(
+        {
+          turnIndex: 1,
+          message: { role: "assistant", content: "done" },
+          toolResults: [],
+        },
+        ctxA,
+      ),
+    ).resolves.toBeUndefined();
+
+    const callsB = new Map<string, (...args: any[]) => unknown>();
+    const piB = {
+      on: vi.fn((name: string, handler: (...args: any[]) => unknown) => {
+        callsB.set(name, handler);
+      }),
+    } as unknown as ExtensionAPI;
+    createExtensionRuntime(piB, config);
+
+    const ctxB = {
+      cwd: "/tmp/project-b",
+      sessionManager: {
+        getSessionId: () => "session-b",
+        getEntries: () => [{ id: "m1" }, { id: "m2" }],
+      },
+      getContextUsage: () => ({ tokens: 300, percent: 0.3, contextWindow: 1000 }),
+    } as any;
+
+    await expect(
+      callsB.get("turn_end")?.(
+        {
+          turnIndex: 2,
+          message: { role: "assistant", content: "done" },
+          toolResults: [],
+        },
+        ctxB,
+      ),
+    ).resolves.toBeUndefined();
+
+    const snapshot = await fetch(`http://127.0.0.1:${port}/snapshot`).then((res) => res.json());
+    expect(snapshot.sessionId).toBe("session-b");
+    expect(snapshot.context.tokens).toBe(300);
+    expect(snapshot.totals.tokensKeptOutApprox).toBeGreaterThanOrEqual(0);
+
+    await expect(callsA.get("session_shutdown")?.({}, ctxA)).resolves.toBeUndefined();
+    await expect(callsB.get("session_shutdown")?.({}, ctxB)).resolves.toBeUndefined();
   });
 });
 

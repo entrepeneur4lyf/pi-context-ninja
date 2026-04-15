@@ -11,11 +11,21 @@ import type { AnalyticsStore } from "../analytics/types.js";
 import { startDashboardServer, type DashboardServerHandle } from "../dashboard/server.js";
 
 const sessionMap = new Map<string, SessionState>();
-type RuntimeServices = {
-  analyticsStore: AnalyticsStore | null;
-  dashboardServer: DashboardServerHandle | null;
+const analyticsStoresBySession = new Map<string, AnalyticsStore>();
+
+type DashboardRuntime = {
+  handle: DashboardServerHandle | null;
+  startPromise: Promise<DashboardServerHandle | null> | null;
+  failed: boolean;
+  activeSessions: Set<string>;
 };
-const servicesBySession = new Map<string, RuntimeServices>();
+
+const dashboardRuntime: DashboardRuntime = {
+  handle: null,
+  startPromise: null,
+  failed: false,
+  activeSessions: new Set(),
+};
 
 function getState(sessionId: string, projectPath?: string): SessionState {
   let state = sessionMap.get(sessionId);
@@ -38,54 +48,78 @@ function persistState(sessionId: string): void {
   }
 }
 
-function getRuntimeServices(
-  sessionId: string,
-  state: SessionState,
-  config: PCNConfig,
-): RuntimeServices | null {
-  if (!config.analytics.enabled && !config.dashboard.enabled) {
+function getAnalyticsStore(sessionId: string, state: SessionState, config: PCNConfig): AnalyticsStore | null {
+  if (!config.analytics.enabled) {
     return null;
   }
 
-  let services = servicesBySession.get(sessionId);
-  if (!services) {
-    services = {
-      analyticsStore: null,
-      dashboardServer: null,
-    };
-
+  let store = analyticsStoresBySession.get(sessionId);
+  if (!store) {
     const dbPath = config.analytics.dbPath || path.join(state.projectPath, ".pi-ninja", "analytics.sqlite");
-    services.analyticsStore = createAnalyticsStore({
+    store = createAnalyticsStore({
       dbPath,
       retentionDays: config.analytics.retentionDays,
     });
+    analyticsStoresBySession.set(sessionId, store);
+  }
 
-    if (config.dashboard.enabled) {
-      services.dashboardServer = startDashboardServer({
+  return store;
+}
+
+async function ensureDashboardServer(sessionId: string, config: PCNConfig): Promise<DashboardServerHandle | null> {
+  if (!config.dashboard.enabled) {
+    return null;
+  }
+
+  dashboardRuntime.activeSessions.add(sessionId);
+
+  if (dashboardRuntime.handle) {
+    return dashboardRuntime.handle;
+  }
+
+  if (dashboardRuntime.failed) {
+    return null;
+  }
+
+  if (!dashboardRuntime.startPromise) {
+    dashboardRuntime.startPromise = (async () => {
+      const handle = startDashboardServer({
         port: config.dashboard.port,
         host: config.dashboard.bindHost,
       });
-    }
 
-    servicesBySession.set(sessionId, services);
+      try {
+        await handle.ready;
+        dashboardRuntime.handle = handle;
+        return handle;
+      } catch {
+        dashboardRuntime.failed = true;
+        await handle.close().catch(() => {});
+        return null;
+      } finally {
+        dashboardRuntime.startPromise = null;
+      }
+    })();
   }
 
-  return services;
+  return dashboardRuntime.startPromise;
 }
 
-async function closeRuntimeServices(sessionId: string): Promise<void> {
-  const services = servicesBySession.get(sessionId);
-  if (!services) {
-    return;
+async function releaseSessionResources(sessionId: string): Promise<void> {
+  const store = analyticsStoresBySession.get(sessionId);
+  if (store) {
+    store.close();
+    analyticsStoresBySession.delete(sessionId);
   }
 
-  servicesBySession.delete(sessionId);
-
-  if (services.dashboardServer) {
-    await services.dashboardServer.close();
-  }
-  if (services.analyticsStore) {
-    services.analyticsStore.close();
+  dashboardRuntime.activeSessions.delete(sessionId);
+  if (dashboardRuntime.activeSessions.size === 0 && dashboardRuntime.handle) {
+    const handle = dashboardRuntime.handle;
+    dashboardRuntime.handle = null;
+    dashboardRuntime.failed = false;
+    await handle.close().catch(() => {});
+  } else if (dashboardRuntime.activeSessions.size === 0) {
+    dashboardRuntime.failed = false;
   }
 }
 
@@ -149,14 +183,10 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
     });
 
     state.currentTurn = typeof event.turnIndex === "number" ? event.turnIndex + 1 : state.currentTurn + 1;
-    const services = getRuntimeServices(sessionId, state, config);
     const latestTurn = state.turnHistory.at(-1);
-    if (services && latestTurn) {
-      if (services.dashboardServer) {
-        await services.dashboardServer.ready;
-      }
-
-      const snapshot = services.analyticsStore?.recordTurn({
+    if (latestTurn) {
+      const analyticsStore = getAnalyticsStore(sessionId, state, config);
+      const snapshot = analyticsStore?.recordTurn({
         sessionId,
         projectPath: state.projectPath,
         turnIndex: latestTurn.turnIndex,
@@ -170,8 +200,11 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
         tokensKeptOutApprox: latestTurn.tokensKeptOutDelta,
       });
 
-      if (snapshot && services.dashboardServer) {
-        services.dashboardServer.publish(snapshot);
+      if (snapshot) {
+        const dashboardServer = await ensureDashboardServer(sessionId, config);
+        if (dashboardServer) {
+          dashboardServer.publish(snapshot);
+        }
       }
     }
 
@@ -200,13 +233,12 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
   });
 
   pi.on("session_shutdown", async (_event, _ctx) => {
-    for (const [storedSessionId, state] of sessionMap) {
-      saveSessionState(storedSessionId, state);
+    const sessionId = resolveSessionId(_ctx);
+    const state = sessionMap.get(sessionId);
+    if (state) {
+      saveSessionState(sessionId, state);
+      sessionMap.delete(sessionId);
     }
-    sessionMap.clear();
-    const serviceSessionIds = [...servicesBySession.keys()];
-    for (const serviceSessionId of serviceSessionIds) {
-      await closeRuntimeServices(serviceSessionId);
-    }
+    await releaseSessionResources(sessionId);
   });
 }
