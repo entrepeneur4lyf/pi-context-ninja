@@ -185,19 +185,22 @@ function normalizeOmitRanges(value: unknown, turnHistory: Array<ReturnType<typeo
   }
 
   return value.filter(isRecord).flatMap((range) => {
-    const startTurn = normalizeRangeTurn(range.startTurn, range.turnRange, 0);
-    const endTurn = normalizeRangeTurn(range.endTurn, range.turnRange, 1);
+    const turnBounds = parseRangeTurns(range);
+    if (!turnBounds) {
+      return [];
+    }
+
+    const { startTurn, endTurn } = turnBounds;
     const indexedAt = normalizeNumber(range.indexedAt);
     const messageCount = normalizeNumber(range.messageCount);
     const summaryRef = typeof range.summaryRef === "string" && range.summaryRef.length > 0
       ? range.summaryRef
       : `${startTurn}-${endTurn}`;
 
-    if (!Number.isFinite(startTurn) || !Number.isFinite(endTurn)) {
+    const { startOffset, endOffset } = resolveTurnOffsets(turnHistory, startTurn, endTurn, messageCount);
+    if (startOffset === null || endOffset === null) {
       return [];
     }
-
-    const { startOffset, endOffset } = resolveTurnOffsets(turnHistory, startTurn, endTurn, messageCount);
 
     return [{
       startTurn,
@@ -256,19 +259,25 @@ function normalizeNullableNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
-function normalizeRangeTurn(value: unknown, turnRange: unknown, index: 0 | 1): number {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return value;
+function parseRangeTurns(range: Record<string, unknown>): { startTurn: number; endTurn: number } | null {
+  const startTurn = normalizeNullableNumber(range.startTurn);
+  const endTurn = normalizeNullableNumber(range.endTurn);
+
+  if (startTurn !== null && endTurn !== null) {
+    return { startTurn, endTurn };
   }
 
-  if (typeof turnRange === "string") {
-    const match = turnRange.match(/^(\d+)\s*-\s*(\d+)$/);
+  if (typeof range.turnRange === "string") {
+    const match = range.turnRange.match(/^(\d+)\s*-\s*(\d+)$/);
     if (match) {
-      return Number.parseInt(match[index + 1] ?? "0", 10);
+      return {
+        startTurn: Number.parseInt(match[1] ?? "0", 10),
+        endTurn: Number.parseInt(match[2] ?? "0", 10),
+      };
     }
   }
 
-  return 0;
+  return null;
 }
 
 function resolveTurnOffsets(
@@ -276,13 +285,22 @@ function resolveTurnOffsets(
   startTurn: number,
   endTurn: number,
   messageCount: number,
-): { startOffset: number; endOffset: number } {
+): { startOffset: number | null; endOffset: number | null } {
   const previousTurn = turnHistory.find((entry) => entry.turnIndex === startTurn - 1);
   const endTurnEntry = turnHistory.find((entry) => entry.turnIndex === endTurn);
+
+  if (startTurn > 0 && !previousTurn) {
+    return { startOffset: null, endOffset: null };
+  }
+  if (!endTurnEntry) {
+    return { startOffset: null, endOffset: null };
+  }
+
   const startOffset = previousTurn?.messageCountAfterTurn ?? 0;
-  const fallbackEndOffset = startOffset + Math.max(0, messageCount - 1);
-  const derivedEndOffset = endTurnEntry ? endTurnEntry.messageCountAfterTurn - 1 : fallbackEndOffset;
-  const endOffset = derivedEndOffset >= startOffset ? derivedEndOffset : fallbackEndOffset;
+  const derivedEndOffset = endTurnEntry.messageCountAfterTurn - 1;
+  const endOffset = derivedEndOffset >= startOffset
+    ? derivedEndOffset
+    : startOffset + Math.max(0, messageCount - 1);
 
   return {
     startOffset,

@@ -100,10 +100,19 @@ describe("state store", () => {
     const legacy = {
       omitRanges: [
         {
+          startKey: "a",
+          endKey: "b",
           turnRange: "1-2",
           indexedAt: 111,
           summaryRef: "sum-1",
           messageCount: 2,
+        },
+        {
+          startKey: "c",
+          endKey: "d",
+          indexedAt: 222,
+          summaryRef: "sum-2",
+          messageCount: 1,
         },
       ],
       currentTurn: 7,

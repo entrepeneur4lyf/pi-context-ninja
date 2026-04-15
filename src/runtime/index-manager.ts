@@ -10,6 +10,7 @@ export function refreshRangeIndex(
   messages: AgentMessage[],
   state: SessionState,
   config: PCNConfig,
+  projectPath = state.projectPath,
 ): OmitRange | null {
   if (!config.backgroundIndexing.enabled) {
     return null;
@@ -38,7 +39,7 @@ export function refreshRangeIndex(
 
   const topic = extractTopicFromRange(slice);
   const entry = buildIndexEntry(stale.startTurn, stale.endTurn, topic, slice.length);
-  appendIndexEntry(getIndexPath(state.projectPath || "default"), entry);
+  appendIndexEntry(getIndexPath(projectPath || "default"), entry);
 
   const range: OmitRange = {
     startTurn: stale.startTurn,

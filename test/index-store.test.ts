@@ -49,7 +49,7 @@ describe("index-store", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("refreshes a stale transcript slice into an index entry and omit range", () => {
+  it("refreshes a stale transcript slice into a project-scoped index entry and omit range", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-index-manager-"));
     process.env.PCN_INDEX_DIR = tmpDir;
 
@@ -99,7 +99,7 @@ describe("index-store", () => {
     config.backgroundIndexing.enabled = true;
     config.backgroundIndexing.minRangeTurns = 2;
 
-    refreshRangeIndex(messages, state, config);
+    refreshRangeIndex(messages, state, config, "/workspace/project-a");
 
     expect(state.omitRanges).toHaveLength(1);
     expect(state.omitRanges[0]).toMatchObject({
@@ -110,9 +110,10 @@ describe("index-store", () => {
       messageCount: 12,
     });
 
-    const entries = readIndexEntries(getIndexPath("session-1"));
+    const entries = readIndexEntries(getIndexPath("/workspace/project-a"));
     expect(entries).toHaveLength(1);
     expect(entries[0]?.turnRange).toBe("0-3");
+    expect(readIndexEntries(getIndexPath("session-1"))).toEqual([]);
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
     delete process.env.PCN_INDEX_DIR;

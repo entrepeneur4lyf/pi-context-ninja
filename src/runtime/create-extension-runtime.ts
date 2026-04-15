@@ -8,14 +8,14 @@ import { refreshRangeIndex } from "./index-manager.js";
 
 const sessionMap = new Map<string, SessionState>();
 
-function getState(sessionId: string): SessionState {
+function getState(sessionId: string, projectPath?: string): SessionState {
   let state = sessionMap.get(sessionId);
   if (!state) {
     const persisted = loadSessionState(sessionId);
     if (persisted) {
       state = hydrateSessionState(persisted);
     } else {
-      state = createSessionState(sessionId);
+      state = createSessionState(projectPath ?? sessionId);
     }
     sessionMap.set(sessionId, state);
   }
@@ -32,7 +32,7 @@ function persistState(sessionId: string): void {
 export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): void {
   pi.on("tool_call", (event, ctx) => {
     const sessionId = resolveSessionId(ctx);
-    const state = getState(sessionId);
+    const state = getState(sessionId, ctx.cwd);
     getOrCreateToolRecord(
       state,
       event.toolCallId,
@@ -45,7 +45,7 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
 
   pi.on("tool_result", (event, ctx) => {
     const sessionId = resolveSessionId(ctx);
-    const state = getState(sessionId);
+    const state = getState(sessionId, ctx.cwd);
     if (event.isError) {
       const rec = state.toolCalls.get(event.toolCallId);
       if (rec) {
@@ -56,13 +56,13 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
 
   pi.on("context", async (event, ctx) => {
     const sessionId = resolveSessionId(ctx);
-    const state = getState(sessionId);
+    const state = getState(sessionId, ctx.cwd);
     return materializeContext(event.messages, { state, config });
   });
 
   pi.on("turn_end", (event, ctx) => {
     const sessionId = resolveSessionId(ctx);
-    const state = getState(sessionId);
+    const state = getState(sessionId, ctx.cwd);
 
     const usage = ctx.getContextUsage();
     if (usage) {
@@ -108,8 +108,8 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
 
   pi.on("agent_end", (event, ctx) => {
     const sessionId = resolveSessionId(ctx);
-    const state = getState(sessionId);
-    refreshRangeIndex(event.messages, state, config);
+    const state = getState(sessionId, ctx.cwd);
+    refreshRangeIndex(event.messages, state, config, ctx.cwd);
     persistState(sessionId);
   });
 
