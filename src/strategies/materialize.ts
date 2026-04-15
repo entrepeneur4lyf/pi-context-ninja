@@ -1,7 +1,12 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { PCNConfig } from "../config.js";
 import type { SessionState } from "../types.js";
-import { extractTextContent, isToolResultMessage, replaceToolContent } from "../messages.js";
+import {
+  countToolTextBlocks,
+  extractTextContent,
+  isToolResultMessage,
+  replaceSingleToolTextContent,
+} from "../messages.js";
 import { creditSavings } from "../state.js";
 import { shortCircuit } from "./short-circuit.js";
 import { codeFilter, detectLanguage } from "./code-filter.js";
@@ -27,14 +32,14 @@ export function materializeContext(
       return msg;
     }
 
+    if (countToolTextBlocks(msg) !== 1) {
+      return msg;
+    }
+
     const originalText = extractTextContent(msg);
     const toolName = (msg as any).toolName ?? "";
     const toolCallId = (msg as any).toolCallId ?? "";
     const isErr = !!(msg as any).isError;
-    const isProtectedTool = config.strategies.deduplication.protectedTools.includes(toolName);
-    if (isProtectedTool && !isErr) {
-      return msg;
-    }
 
     let currentText = originalText;
     let newText: string | null = null;
@@ -139,7 +144,7 @@ export function materializeContext(
     }
 
     if (newText !== null) {
-      return replaceToolContent(msg, newText);
+      return replaceSingleToolTextContent(msg, newText);
     }
 
     return msg;

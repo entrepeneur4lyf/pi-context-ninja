@@ -6,6 +6,7 @@ import {
   isToolResultMessage,
   replaceToolContent,
   replaceToolTextContent,
+  replaceSingleToolTextContent,
 } from "../src/messages";
 
 describe("message helpers", () => {
@@ -66,5 +67,23 @@ describe("message helpers", () => {
     const replaced = replaceToolContent(msg, "new");
 
     expect((replaced as any).content[0].text).toBe("new");
+  });
+
+  it("replaces a single text block without merging surrounding blocks", () => {
+    const msg = {
+      role: "toolResult",
+      content: [
+        { type: "image", data: "img-1", mimeType: "image/png" },
+        { type: "text", text: "old" },
+        { type: "image", data: "img-2", mimeType: "image/png" },
+      ],
+    } as any;
+
+    const replaced = replaceSingleToolTextContent(msg, "new");
+
+    expect(replaced.content).toHaveLength(3);
+    expect(replaced.content[0]).toMatchObject({ type: "image", data: "img-1", mimeType: "image/png" });
+    expect(replaced.content[1]).toMatchObject({ type: "text", text: "new" });
+    expect(replaced.content[2]).toMatchObject({ type: "image", data: "img-2", mimeType: "image/png" });
   });
 });

@@ -11,6 +11,10 @@ function isTextContent(block: unknown): block is TextContent {
   return isRecord(block) && block.type === "text" && typeof block.text === "string";
 }
 
+function countTextBlocks(content: ToolResultBlock[]): number {
+  return content.reduce((count, block) => count + (isTextContent(block) ? 1 : 0), 0);
+}
+
 /**
  * Checks whether a message is a Pi tool result message.
  */
@@ -76,6 +80,32 @@ export function replaceToolTextContent(msg: ToolResultMessage, newText: string):
     ...msg,
     content: replaceToolTextBlocks(msg.content, newText),
   };
+}
+
+/**
+ * Replaces a single text block inside a tool result when exactly one is present.
+ * Mixed tool results with multiple text blocks are left unchanged to preserve semantics.
+ */
+export function replaceSingleToolTextContent(msg: ToolResultMessage, newText: string): ToolResultMessage {
+  if (countTextBlocks(msg.content) !== 1) {
+    return msg;
+  }
+
+  return {
+    ...msg,
+    content: msg.content.map((block) => (isTextContent(block) ? { ...block, text: newText } : block)),
+  };
+}
+
+/**
+ * Returns the number of text blocks in a tool result message.
+ */
+export function countToolTextBlocks(msg: AgentMessage): number {
+  if (!isToolResultMessage(msg)) {
+    return 0;
+  }
+
+  return countTextBlocks(msg.content);
 }
 
 /**

@@ -70,9 +70,11 @@ describe("materialize", () => {
     expect((result.messages as any)[0].content[0].text).toBe('{"status":"ok"}');
   });
 
-  it("preserves protected write results", () => {
+  it("still shapes protected tools but skips deduplication", () => {
     const state = createSessionState("/tmp");
     const cfg = defaultConfig();
+    cfg.strategies.shortCircuit.minTokens = 4;
+    cfg.strategies.deduplication.maxOccurrences = 1;
     const msgs = [
       {
         role: "toolResult",
@@ -82,12 +84,21 @@ describe("materialize", () => {
         toolCallId: "t1",
         _key: "t1",
       },
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: '{"status":"ok"}' }],
+        toolName: "write",
+        isError: false,
+        toolCallId: "t2",
+        _key: "t2",
+      },
     ] as any;
 
     const result = materializeContext(msgs, { state, config: cfg });
 
-    expect(result.messages?.length).toBe(1);
-    expect((result.messages as any)[0].content[0].text).toBe('{"status":"ok"}');
+    expect(result.messages?.length).toBe(2);
+    expect((result.messages as any)[0].content[0].text).toBe("[ok]");
+    expect((result.messages as any)[1].content[0].text).toBe("[ok]");
   });
 
   it("preserves image blocks when rewriting tool results", () => {
@@ -128,7 +139,7 @@ describe("materialize", () => {
     expect(toolMsg.content[1]).toMatchObject({ type: "image", data: "img-data", mimeType: "image/png" });
   });
 
-  it("preserves later text blocks when rewriting mixed tool results", () => {
+  it("skips rewriting mixed tool results with multiple text blocks", () => {
     const state = createSessionState("/tmp");
     const cfg = defaultConfig();
     cfg.strategies.truncation.headLines = 1;
@@ -154,12 +165,7 @@ describe("materialize", () => {
     const result = materializeContext(msgs, { state, config: cfg });
     const toolMsg = result.messages?.[0] as any;
 
-    expect(toolMsg.content).toHaveLength(3);
-    expect(toolMsg.content[0]).toMatchObject({ type: "text" });
-    expect(toolMsg.content[1]).toMatchObject({ type: "image", data: "img-data", mimeType: "image/png" });
-    expect(toolMsg.content[2]).toMatchObject({ type: "text" });
-    expect(toolMsg.content[0].text).toBe(toolMsg.content[2].text);
-    expect(toolMsg.content[0].text).toContain("[--- 2 lines omitted ---]");
+    expect(toolMsg.content).toEqual(msgs[0].content);
   });
 
   it("deduplicates normalized content across distinct tool calls", () => {
