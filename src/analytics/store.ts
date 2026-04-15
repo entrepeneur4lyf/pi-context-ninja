@@ -61,7 +61,7 @@ function toTurnRecord(row: AnalyticsRow): AnalyticsTurnRecord {
   };
 }
 
-function buildSnapshot(rows: AnalyticsRow[]): AnalyticsSnapshot {
+function buildSnapshot(rows: AnalyticsRow[], sessionId: string): AnalyticsSnapshot {
   const recentTurns = rows.map(toTurnRecord);
   const latestTurn = recentTurns[0] ?? null;
   const totals: AnalyticsTotals = recentTurns.reduce(
@@ -74,7 +74,7 @@ function buildSnapshot(rows: AnalyticsRow[]): AnalyticsSnapshot {
 
   return {
     generatedAt: Date.now(),
-    sessionId: latestTurn?.sessionId ?? null,
+    sessionId,
     projectPath: latestTurn?.projectPath ?? null,
     totalTurns: recentTurns.length,
     totals,
@@ -139,6 +139,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
       tokens_saved_approx,
       tokens_kept_out_approx
     FROM turn_metrics
+    WHERE session_id = ?
     ORDER BY timestamp DESC, id DESC
     LIMIT ?
   `);
@@ -149,6 +150,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
       COALESCE(SUM(tokens_saved_approx), 0) AS tokensSavedApprox,
       COALESCE(SUM(tokens_kept_out_approx), 0) AS tokensKeptOutApprox
     FROM turn_metrics
+    WHERE session_id = ?
   `);
 
   function pruneExpiredRows(retentionDays?: number): void {
@@ -160,18 +162,18 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     db.prepare("DELETE FROM turn_metrics WHERE timestamp < ?").run(cutoff);
   }
 
-  function getRows(limit = 50): AnalyticsRow[] {
-    return selectRows.all(limit) as AnalyticsRow[];
+  function getRows(sessionId: string, limit = 50): AnalyticsRow[] {
+    return selectRows.all(sessionId, limit) as AnalyticsRow[];
   }
 
-  function readSnapshot(limit = 50): AnalyticsSnapshot {
-    const rows = getRows(limit);
-    const totals = selectTotals.get() as {
+  function readSnapshot(sessionId: string, limit = 50): AnalyticsSnapshot {
+    const rows = getRows(sessionId, limit);
+    const totals = selectTotals.get(sessionId) as {
       totalTurns: number;
       tokensSavedApprox: number;
       tokensKeptOutApprox: number;
     };
-    const snapshot = buildSnapshot(rows);
+    const snapshot = buildSnapshot(rows, sessionId);
 
     return {
       ...snapshot,
@@ -187,10 +189,10 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     recordTurn(turn: AnalyticsTurnRecord): AnalyticsSnapshot {
       insertTurn.run(turn);
       pruneExpiredRows(options.retentionDays);
-      return readSnapshot();
+      return readSnapshot(turn.sessionId);
     },
-    getSnapshot(limit = 50): AnalyticsSnapshot {
-      return readSnapshot(limit);
+    getSnapshot(sessionId: string, limit = 50): AnalyticsSnapshot {
+      return readSnapshot(sessionId, limit);
     },
     close(): void {
       db.close();

@@ -12,6 +12,7 @@ pre#events{background:#1a1a1a;padding:1rem;border-radius:8px;max-height:300px;ov
 </style></head><body>
 <h1>Pi Context Ninja</h1>
 <div class="stats">
+  <div class="stat"><div id="session-id" class="val">--</div><div class="label">Session</div></div>
   <div class="stat"><div id="ctx-pct" class="val">--%</div><div class="label">Context</div></div>
   <div class="stat"><div id="kept-out" class="val">--</div><div class="label">Tokens Kept Out</div></div>
   <div class="stat"><div id="turns" class="val">--</div><div class="label">Turns</div></div>
@@ -27,6 +28,7 @@ source.onmessage=(event)=>{
   events.scrollTop=events.scrollHeight;
   if(payload.type==='snapshot'){
     const d=payload.data;
+    if(d?.sessionId)document.getElementById('session-id').textContent=d.sessionId;
     if(d?.context?.percent!=null)document.getElementById('ctx-pct').textContent=(d.context.percent*100).toFixed(1)+'%';
     if(d?.totals?.tokensKeptOutApprox!=null)document.getElementById('kept-out').textContent=d.totals.tokensKeptOutApprox.toLocaleString();
     if(d?.totalTurns!=null)document.getElementById('turns').textContent=d.totalTurns.toLocaleString();

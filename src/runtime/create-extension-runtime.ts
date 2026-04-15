@@ -280,7 +280,7 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
       if (snapshot) {
         const dashboardServer = await ensureDashboardServer(sessionId, config);
         if (dashboardServer) {
-          dashboardServer.publish(snapshot);
+          dashboardServer.publish(sessionId, snapshot);
         }
       }
     }

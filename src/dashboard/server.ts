@@ -10,9 +10,9 @@ export interface DashboardServerOptions {
 export interface DashboardServerHandle {
   server: Server;
   ready: Promise<void>;
-  publish(snapshot: AnalyticsSnapshot): void;
+  publish(sessionId: string, snapshot: AnalyticsSnapshot): void;
   close(): Promise<void>;
-  snapshot(): AnalyticsSnapshot | null;
+  snapshot(sessionId?: string): AnalyticsSnapshot | null;
 }
 
 type SseClient = ServerResponse;
@@ -37,7 +37,8 @@ export function startDashboardServer(
 ): DashboardServerHandle {
   const options = normalizeOptions(optionsOrPort, host);
   const clients = new Set<SseClient>();
-  let latestSnapshot: AnalyticsSnapshot | null = null;
+  const snapshotsBySession = new Map<string, AnalyticsSnapshot>();
+  let activeSessionId: string | null = null;
   let resolveReady: (() => void) | null = null;
   let rejectReady: ((error: Error) => void) | null = null;
   const ready = new Promise<void>((resolve, reject) => {
@@ -45,20 +46,32 @@ export function startDashboardServer(
     rejectReady = reject;
   });
 
+  function getSnapshot(sessionId?: string): AnalyticsSnapshot | null {
+    if (sessionId) {
+      return snapshotsBySession.get(sessionId) ?? null;
+    }
+    if (!activeSessionId) {
+      return null;
+    }
+    return snapshotsBySession.get(activeSessionId) ?? null;
+  }
+
   const server = http.createServer((req: IncomingMessage, res: ServerResponse) => {
-    if (req.url === "/" || req.url === "/index.html") {
+    const requestUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? `${options.host}:${options.port}`}`);
+
+    if (requestUrl.pathname === "/" || requestUrl.pathname === "/index.html") {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(renderDashboardPage());
       return;
     }
 
-    if (req.url === "/snapshot") {
+    if (requestUrl.pathname === "/snapshot") {
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify(latestSnapshot));
+      res.end(JSON.stringify(getSnapshot(requestUrl.searchParams.get("sessionId") ?? undefined)));
       return;
     }
 
-    if (req.url === "/events") {
+    if (requestUrl.pathname === "/events") {
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -66,8 +79,9 @@ export function startDashboardServer(
       });
       res.write("retry: 1000\n");
       writeSse(res, "connected", {});
-      if (latestSnapshot) {
-        writeSse(res, "snapshot", latestSnapshot);
+      const snapshot = getSnapshot(requestUrl.searchParams.get("sessionId") ?? undefined);
+      if (snapshot) {
+        writeSse(res, "snapshot", snapshot);
       }
       clients.add(res);
       req.on("close", () => clients.delete(res));
@@ -99,8 +113,9 @@ export function startDashboardServer(
   return {
     server,
     ready,
-    publish(snapshot: AnalyticsSnapshot): void {
-      latestSnapshot = snapshot;
+    publish(sessionId: string, snapshot: AnalyticsSnapshot): void {
+      activeSessionId = sessionId;
+      snapshotsBySession.set(sessionId, snapshot);
       for (const client of clients) {
         try {
           writeSse(client, "snapshot", snapshot);
@@ -109,8 +124,8 @@ export function startDashboardServer(
         }
       }
     },
-    snapshot(): AnalyticsSnapshot | null {
-      return latestSnapshot;
+    snapshot(sessionId?: string): AnalyticsSnapshot | null {
+      return getSnapshot(sessionId);
     },
     close(): Promise<void> {
       for (const client of clients) {

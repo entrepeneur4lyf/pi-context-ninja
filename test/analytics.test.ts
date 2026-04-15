@@ -48,7 +48,7 @@ describe("analytics store", () => {
       store.close();
 
       const reopened = createAnalyticsStore({ dbPath, retentionDays: 30 });
-      const snapshot = reopened.getSnapshot();
+      const snapshot = reopened.getSnapshot("session-a");
 
       expect(snapshot.totalTurns).toBe(1);
       expect(snapshot.latestTurn).toMatchObject({
@@ -66,6 +66,63 @@ describe("analytics store", () => {
       });
 
       reopened.close();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("returns snapshots scoped to the requested session", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-analytics-"));
+    const dbPath = path.join(tmpDir, "analytics.sqlite");
+    const timestamp = Date.now();
+
+    try {
+      const store = createAnalyticsStore({ dbPath, retentionDays: 30 });
+
+      store.recordTurn({
+        sessionId: "session-a",
+        projectPath: "/tmp/project-a",
+        turnIndex: 1,
+        toolCount: 1,
+        messageCountAfterTurn: 3,
+        timestamp,
+        contextTokens: 100,
+        contextPercent: 0.1,
+        contextWindow: 1000,
+        tokensSavedApprox: 10,
+        tokensKeptOutApprox: 20,
+      });
+
+      store.recordTurn({
+        sessionId: "session-b",
+        projectPath: "/tmp/project-b",
+        turnIndex: 1,
+        toolCount: 1,
+        messageCountAfterTurn: 2,
+        timestamp: timestamp + 1,
+        contextTokens: 300,
+        contextPercent: 0.3,
+        contextWindow: 1000,
+        tokensSavedApprox: 30,
+        tokensKeptOutApprox: 40,
+      });
+
+      const snapshot = store.getSnapshot("session-a");
+
+      expect(snapshot.sessionId).toBe("session-a");
+      expect(snapshot.projectPath).toBe("/tmp/project-a");
+      expect(snapshot.totalTurns).toBe(1);
+      expect(snapshot.context.tokens).toBe(100);
+      expect(snapshot.totals.tokensSavedApprox).toBe(10);
+      expect(snapshot.totals.tokensKeptOutApprox).toBe(20);
+      expect(snapshot.recentTurns).toHaveLength(1);
+      expect(snapshot.recentTurns[0]).toMatchObject({
+        sessionId: "session-a",
+        projectPath: "/tmp/project-a",
+        contextTokens: 100,
+      });
+
+      store.close();
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

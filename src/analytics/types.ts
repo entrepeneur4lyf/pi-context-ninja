@@ -41,6 +41,6 @@ export interface AnalyticsStoreOptions {
 
 export interface AnalyticsStore {
   recordTurn(turn: AnalyticsTurnRecord): AnalyticsSnapshot;
-  getSnapshot(limit?: number): AnalyticsSnapshot;
+  getSnapshot(sessionId: string, limit?: number): AnalyticsSnapshot;
   close(): void;
 }

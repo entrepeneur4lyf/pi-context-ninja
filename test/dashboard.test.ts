@@ -39,6 +39,8 @@ describe("dashboard server", () => {
       expect(html).toContain("Pi Context Ninja");
       expect(html).toContain("EventSource('/events')");
       expect(html).toContain("Tokens Kept Out");
+      expect(html).toContain("Session");
+      expect(html).toContain("session-id");
       expect(html).not.toContain("Tokens Saved");
 
       const response = await fetch(`${baseUrl}/events`);
@@ -51,7 +53,7 @@ describe("dashboard server", () => {
       const initial = decoder.decode((await reader.read()).value);
       expect(initial).toContain('"type":"connected"');
 
-      server.publish({
+      server.publish("session-a", {
         generatedAt: 1713081600000,
         sessionId: "session-a",
         projectPath: "/tmp/project",
@@ -154,8 +156,9 @@ describe("dashboard server", () => {
 
     const snapshot = await fetch(`http://127.0.0.1:${port}/snapshot`).then((res) => res.json());
     expect(snapshot.sessionId).toBe("session-b");
+    expect(snapshot.totalTurns).toBe(1);
     expect(snapshot.context.tokens).toBe(300);
-    expect(snapshot.totals.tokensKeptOutApprox).toBeGreaterThanOrEqual(0);
+    expect(snapshot.totals.tokensKeptOutApprox).toBe(0);
 
     await expect(callsA.get("session_shutdown")?.({}, ctxA)).resolves.toBeUndefined();
     await expect(callsB.get("session_shutdown")?.({}, ctxB)).resolves.toBeUndefined();
