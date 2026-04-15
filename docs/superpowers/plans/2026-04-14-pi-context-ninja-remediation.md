@@ -44,14 +44,14 @@ Update `package.json` so the repo no longer depends on hidden ambient installs. 
 
 - [ ] **Step 2: Make TypeScript compilation deterministic for both source and tests**
 
-Update `tsconfig.json` so the project compiles against modern Node ESM and includes test globals without relying on editor magic:
+Update `tsconfig.json` so the project uses a stable pre-migration ESM baseline and includes test globals without relying on editor magic. Do not force the repo into a `NodeNext` explicit-extension migration in this task:
 
 ```json
 {
   "compilerOptions": {
     "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
+    "module": "ESNext",
+    "moduleResolution": "node",
     "types": ["node", "vitest/globals"],
     "strict": true,
     "skipLibCheck": true,
@@ -75,7 +75,7 @@ Expected: lockfile updated with `@mariozechner/pi-coding-agent@0.67.2`, `@marioz
 
 Run: `rtk npm run typecheck`
 
-Expected: FAIL with the current hook-order and message-typing errors in `src/index.ts`, `src/messages.ts`, and `src/config.ts`.
+Expected: FAIL with the current Pi-compatibility and local baseline errors concentrated in `src/index.ts`, `src/messages.ts`, `src/config.ts`, `test/config.test.ts`, and `src/compression/index-entry.ts`, but without a broad `TS2835` import-extension cascade.
 
 - [ ] **Step 5: Commit**
 
