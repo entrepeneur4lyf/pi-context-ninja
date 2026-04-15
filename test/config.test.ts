@@ -8,7 +8,10 @@ describe("config", () => {
   it("returns defaults when no config file exists", () => {
     const config = loadConfig("/nonexistent/config.yaml");
     expect(config.systemHint.enabled).toBe(true);
+    expect(config.systemHint.frequency).toBe("once_per_session");
     expect(config.nativeCompactionIntegration.enabled).toBe(false);
+    expect(config.nativeCompactionIntegration.fallbackOnFailure).toBe(true);
+    expect(config.nativeCompactionIntegration.maxContextSize).toBe(0);
     expect(config.backgroundIndexing.enabled).toBe(true);
     expect(config.strategies.shortCircuit.minTokens).toBe(8000);
     expect(config.strategies.codeFilter.maxBodyLines).toBe(200);
@@ -25,6 +28,12 @@ describe("config", () => {
         [
           "systemHint:",
           "  enabled: false",
+          "  frequency: always",
+          "  text: custom hint",
+          "nativeCompactionIntegration:",
+          "  enabled: true",
+          "  fallbackOnFailure: false",
+          "  maxContextSize: 12345",
           "strategies:",
           "  shortCircuit:",
           "    minTokens: 1234",
@@ -38,11 +47,15 @@ describe("config", () => {
 
       const config = loadConfig(cfgPath);
       expect(config.systemHint.enabled).toBe(false);
+      expect(config.systemHint.frequency).toBe("always");
+      expect(config.systemHint.text).toBe("custom hint");
+      expect(config.nativeCompactionIntegration.enabled).toBe(true);
+      expect(config.nativeCompactionIntegration.fallbackOnFailure).toBe(false);
+      expect(config.nativeCompactionIntegration.maxContextSize).toBe(12345);
       expect(config.strategies.shortCircuit.minTokens).toBe(1234);
       expect(config.strategies.codeFilter.maxBodyLines).toBe(88);
       expect(config.strategies.codeFilter.keepImports).toBe(false);
       expect(config.strategies.deduplication.maxOccurrences).toBe(7);
-      expect(config.nativeCompactionIntegration.enabled).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

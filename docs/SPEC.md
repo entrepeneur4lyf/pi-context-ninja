@@ -40,9 +40,9 @@ Default behavior in this spec:
 - persist PCN state in sidecars/SQLite
 - re-materialize the pruned view on each request via Pi hooks
 
-Optional future behavior:
+Optional behavior:
 - integrate with Pi native compaction through `session_before_compact`
-- produce model-visible compaction entries when the user explicitly wants that mode
+- produce model-visible compaction entries only when that mode is explicitly enabled
 
 That optional mode is NOT the default silent-first path.
 
@@ -55,6 +55,7 @@ The relevant Pi surfaces are:
 - `context`
 - `before_provider_request`
 - `before_agent_start`
+- `turn_end`
 - `agent_end`
 - `session_shutdown`
 - `session_before_compact` (optional / hybrid mode)
@@ -76,16 +77,15 @@ Pi wiring details that matter:
 | `post_tool_call` | `tool_result` | Immediate shaping for successful outputs, telemetry, token estimate update |
 | `pre_llm_call` | `context` | Main materialization pipeline over cloned `AgentMessage[]` |
 | injected passive context note | `before_agent_start` | Append a tiny system-prompt hint when enabled |
-| request payload override | `before_provider_request` | Optional provider-specific payload edits |
-| final accounting / tail cleanup | `agent_end` and `session_shutdown` | Final telemetry flush, analytics persistence, cleanup |
+| provider payload observation | `before_provider_request` | Observe or pass through the provider payload without mutating it by default |
+| turn accounting | `turn_end` | Record exact Pi context usage and approximate savings for the dashboard/analytics layer |
+| final accounting / tail cleanup | `agent_end` and `session_shutdown` | Final index refresh, persistence, analytics cleanup, resource shutdown |
 
 ### Optional hooks
 
 | Pi hook/event | Use |
 |---|---|
-| `session_before_compact` | Optional hybrid mode that replaces Pi native compaction with a PCN-provided compaction result |
-| `session_compact` | Observe native/hybrid compaction completion for telemetry |
-| `tool_execution_*` | Optional live dashboard heartbeats only |
+| `session_before_compact` | Optional native compaction path that can return a Pi-shaped `CompactionResult` when enabled |
 
 ## Critical Differences from Hermes and Pi Native Compaction
 
@@ -126,8 +126,7 @@ Implication:
 Pi native compaction creates `compaction` entries that become part of future context.
 That is useful, but it is not silent-first in the HMC sense.
 
-Default PCN mode should therefore avoid using native compaction as its primary pruning
-mechanism.
+Default PCN mode therefore keeps native compaction disabled. When `nativeCompactionIntegration.enabled` is turned on, PCN may return a native `CompactionResult` through `session_before_compact`; otherwise it stays out of Pi compaction entirely.
 
 ## Silent-First Model in Pi
 
@@ -298,11 +297,14 @@ Important:
 ### Optional hybrid compaction mode
 
 If enabled explicitly, PCN may use `session_before_compact` to return a native
-`CompactionResult` and participate in Pi's built-in compaction pipeline.
+`CompactionResult` and participate in Pi's built-in compaction pipeline when the
+current context has crossed `nativeCompactionIntegration.maxContextSize`.
 
 That mode is:
 - model-visible
 - useful for users who want native Pi session compaction semantics
+- gated by the configured max-context threshold
+- allowed to fall back to Pi's native compaction when the index path fails and `fallbackOnFailure` is true
 - not the default silent-first mode
 
 ## Index Presentation
@@ -358,12 +360,14 @@ Per-tool-call metadata:
 
 Represents a historical region that PCN hides from future request contexts.
 
-Suggested fields:
-- `startKey: string`
-- `endKey: string`
-- `turnRange: string`
+Actual fields:
+- `startTurn: number`
+- `endTurn: number`
+- `startOffset: number`
+- `endOffset: number`
 - `indexedAt: number`
-- `summaryRef: string` or inline index metadata
+- `summaryRef: string`
+- `messageCount: number`
 
 The keying scheme should be based on Pi-stable message/entry correlation where possible,
 not Hermes positional assumptions.
@@ -414,9 +418,13 @@ This hint should be:
 - short
 - not a description of PCN internals
 
+Hint frequency is tracked in-memory per session only; the hint-application state is not persisted.
+
 ## Analytics (SQLite)
 
 SQLite store at `~/.pi-ninja/analytics.db`:
+- exact Pi context usage from `getContextUsage()`
+- approximate savings from PCN rewrite and omit counters
 - WAL mode
 - busy timeout
 - retention TTL
@@ -447,7 +455,7 @@ Panels:
 - live event log
 
 Pi-specific note:
-- live tool heartbeat events are easiest through `tool_result` and optional `tool_execution_*`
+- dashboard cards should display exact context usage separately from approximate savings
 - do not invent Hermes phantom-session heuristics unless Pi actually exhibits equivalent noise
 - if Pi auxiliary flows do create low-signal sessions or events, filter them based on evidence, not cargo-culted Hermes thresholds
 
@@ -469,7 +477,10 @@ Major blocks:
 
 Key defaults:
 - `nativeCompactionIntegration.enabled = false`
+- `nativeCompactionIntegration.fallbackOnFailure = true`
+- `nativeCompactionIntegration.maxContextSize = 0`
 - `systemHint.enabled = true`
+- `systemHint.frequency = once_per_session`
 - `backgroundIndexing.enabled = true`
 
 ## Persistence
@@ -489,7 +500,7 @@ Requirements:
 ### Index store
 
 Path:
-- `~/.pi-ninja/state/{session}_index.jsonl`
+- `~/.pi-ninja/index/{project}.jsonl`
 
 Requirements:
 - append-only JSONL
@@ -526,10 +537,13 @@ Requirements:
 - append passive system hint when enabled
 
 `before_provider_request`
-- optional payload-level modifications only
-- do not use unless provider-specific behavior requires it
+- observe or pass through provider payloads without mutating them by default
 
 ### Tier 4: finalization
+
+`turn_end`
+- record exact context usage from Pi
+- record approximate savings for analytics/dashboard
 
 `agent_end`
 - final telemetry flush
@@ -543,8 +557,8 @@ Requirements:
 
 `session_before_compact`
 - only when `nativeCompactionIntegration.enabled`
-- may provide custom `CompactionResult`
-- otherwise PCN stays out of Pi native compaction
+- may provide custom `CompactionResult` when the context usage crosses `nativeCompactionIntegration.maxContextSize`
+- falls back to Pi native compaction when configured to do so
 
 ## Key Design Decisions
 
@@ -562,13 +576,13 @@ Requirements:
    `context` modifies messages, not the system prompt.
 
 5. Native compaction integration is optional, not foundational.
-   Silent-first PCN should not depend on model-visible compaction entries.
+   Silent-first PCN should not depend on model-visible compaction entries unless the mode is explicitly enabled.
 
 6. Tool names and roles must be Pi-native.
    Use `toolResult`, `write`, `edit`, and Pi message semantics throughout.
 
 7. Use Pi-aware context usage semantics.
-   Treat `tokens: null` after compaction as a valid state, not a bug.
+   Treat `tokens: null` after compaction as a valid state, not a bug, and keep exact context usage separate from approximate savings.
 
 ## NOT in scope (this version)
 

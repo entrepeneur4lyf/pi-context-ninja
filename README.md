@@ -1,6 +1,6 @@
 # Pi Context Ninja
 
-Silent-first context optimization extension for Pi.
+Silent-first context optimization extension for Pi 0.67.2.
 
 Reduces context window usage automatically by compressing, deduplicating, and pruning tool results — with zero disruption to agent behavior.
 
@@ -11,6 +11,7 @@ pi --extension src/index.ts
 ```
 
 The extension is configured via an optional YAML file (default: `~/.pi-ninja/config.yaml`). Set a custom path with `PCN_CONFIG_PATH`.
+This build targets Pi 0.67.2 directly and uses the real `tool_call`, `tool_result`, `context`, `before_agent_start`, `before_provider_request`, `turn_end`, `agent_end`, `session_before_compact`, and `session_shutdown` hooks.
 
 ## Configuration
 
@@ -65,6 +66,12 @@ dashboard:
   port: 48900
   bindHost: "127.0.0.1"
 
+# Optional native compaction integration
+nativeCompactionIntegration:
+  enabled: false
+  fallbackOnFailure: true
+  maxContextSize: 32768
+
 # System hint injected into sessions
 systemHint:
   enabled: true
@@ -85,13 +92,13 @@ The compression pipeline applies six strategies in order to each tool result mes
 
 ## Dashboard
 
-The analytics dashboard visualizes token savings, turn history, and strategy effectiveness.
+The analytics dashboard is optional observability. It visualizes exact Pi context usage, approximate savings, turn history, and strategy effectiveness.
 
 ```
 http://127.0.0.1:48900
 ```
 
-Enabled by default. Change the port or bind address in the config.
+Enabled by default. Change the port or bind address in the config, or disable it entirely when you want silent-only operation.
 
 ## Architecture
 

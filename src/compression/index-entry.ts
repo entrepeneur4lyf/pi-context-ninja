@@ -21,3 +21,7 @@ export function formatTOC(entries: IndexEntry[]): string {
   const lines = entries.map((e) => `  - [${e.turnRange}] ${e.topic}`);
   return [header, ...lines].join("\n");
 }
+
+export function buildCompactionSummary(entries: IndexEntry[]): string {
+  return formatTOC(entries);
+}

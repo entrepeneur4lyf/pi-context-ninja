@@ -9,9 +9,12 @@ import { refreshRangeIndex } from "./index-manager.js";
 import { createAnalyticsStore } from "../analytics/store.js";
 import type { AnalyticsStore } from "../analytics/types.js";
 import { startDashboardServer, type DashboardServerHandle } from "../dashboard/server.js";
+import { buildCompactionSummary } from "../compression/index-entry.js";
+import { getIndexPath, readIndexEntries } from "../persistence/index-store.js";
 
 const sessionMap = new Map<string, SessionState>();
 const analyticsStoresBySession = new Map<string, AnalyticsStore>();
+const systemHintStateBySession = new Map<string, { lastAppliedText: string | null; appliedOnce: boolean }>();
 
 type DashboardRuntime = {
   handle: DashboardServerHandle | null;
@@ -45,6 +48,68 @@ function persistState(sessionId: string): void {
   const state = sessionMap.get(sessionId);
   if (state) {
     saveSessionState(sessionId, state);
+  }
+}
+
+function appendSystemHint(systemPrompt: string, hintText: string): string {
+  const trimmedSystemPrompt = systemPrompt.trimEnd();
+  if (!trimmedSystemPrompt) {
+    return hintText;
+  }
+
+  return `${trimmedSystemPrompt}\n\n${hintText}`;
+}
+
+function getSystemHintState(sessionId: string): { lastAppliedText: string | null; appliedOnce: boolean } {
+  let state = systemHintStateBySession.get(sessionId);
+  if (!state) {
+    state = { lastAppliedText: null, appliedOnce: false };
+    systemHintStateBySession.set(sessionId, state);
+  }
+  return state;
+}
+
+function resolveContextTokens(state: SessionState, ctx: { getContextUsage(): { tokens: number | null } | undefined }): number | null {
+  const usage = ctx.getContextUsage();
+  if (usage?.tokens !== undefined && usage.tokens !== null) {
+    return usage.tokens;
+  }
+  return state.lastContextTokens;
+}
+
+function buildNativeCompactionResult(
+  sessionId: string,
+  state: SessionState,
+  config: PCNConfig,
+  ctx: { getContextUsage(): { tokens: number | null } | undefined },
+  preparation: { firstKeptEntryId: string },
+): { cancel?: boolean; compaction?: { summary: string; firstKeptEntryId: string; tokensBefore: number } } | undefined {
+  if (!config.nativeCompactionIntegration.enabled) {
+    return undefined;
+  }
+
+  const contextTokens = resolveContextTokens(state, ctx);
+  const threshold = config.nativeCompactionIntegration.maxContextSize;
+  if (contextTokens === null || contextTokens < threshold) {
+    return undefined;
+  }
+
+  try {
+    const indexPath = getIndexPath(state.projectPath || sessionId);
+    const entries = readIndexEntries(indexPath);
+    if (entries.length === 0) {
+      return config.nativeCompactionIntegration.fallbackOnFailure ? undefined : { cancel: true };
+    }
+
+    return {
+      compaction: {
+        summary: buildCompactionSummary(entries),
+        firstKeptEntryId: preparation.firstKeptEntryId,
+        tokensBefore: contextTokens,
+      },
+    };
+  } catch {
+    return config.nativeCompactionIntegration.fallbackOnFailure ? undefined : { cancel: true };
   }
 }
 
@@ -211,19 +276,46 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
     persistState(sessionId);
   });
 
-  pi.on("before_agent_start", (event) => {
+  pi.on("before_agent_start", (event, ctx) => {
     if (!config.systemHint.enabled) {
       return undefined;
     }
 
+    const sessionId = resolveSessionId(ctx);
+    const hintState = getSystemHintState(sessionId);
+    const hintText = config.systemHint.text.trim();
+    if (!hintText) {
+      return undefined;
+    }
+
+    if (config.systemHint.frequency === "once_per_session") {
+      if (hintState.appliedOnce) {
+        return undefined;
+      }
+      hintState.appliedOnce = true;
+      hintState.lastAppliedText = hintText;
+      return {
+        systemPrompt: appendSystemHint(event.systemPrompt, hintText),
+      };
+    }
+
+    if (config.systemHint.frequency === "on_change" && hintState.lastAppliedText === hintText) {
+      return undefined;
+    }
+
+    hintState.lastAppliedText = hintText;
     return {
-      systemPrompt: `${event.systemPrompt}\n\n${config.systemHint.text}`,
+      systemPrompt: appendSystemHint(event.systemPrompt, hintText),
     };
   });
 
-  pi.on("before_provider_request", (_event, _ctx) => undefined);
+  pi.on("before_provider_request", (event) => event.payload);
 
-  pi.on("session_before_compact", (_event, _ctx) => undefined);
+  pi.on("session_before_compact", (event, ctx) => {
+    const sessionId = resolveSessionId(ctx);
+    const state = getState(sessionId, ctx.cwd);
+    return buildNativeCompactionResult(sessionId, state, config, ctx, event.preparation);
+  });
 
   pi.on("agent_end", (event, ctx) => {
     const sessionId = resolveSessionId(ctx);
@@ -239,6 +331,7 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
       saveSessionState(sessionId, state);
       sessionMap.delete(sessionId);
     }
+    systemHintStateBySession.delete(sessionId);
     await releaseSessionResources(sessionId);
   });
 }
