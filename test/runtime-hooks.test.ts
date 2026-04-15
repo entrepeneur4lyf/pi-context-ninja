@@ -233,7 +233,7 @@ describe("runtime hook registration", () => {
     expect(payload).toEqual({ provider: "openai", body: { model: "gpt-5.4" } });
   });
 
-  it("indexes only tool results for background pruning", async () => {
+  it("does not expand already shortened tool results during background pruning", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;
     config.dashboard.enabled = false;
@@ -292,7 +292,7 @@ describe("runtime hook registration", () => {
           { role: "assistant", content: "running read" },
           {
             role: "toolResult",
-            content: [{ type: "text", text: "long file body" }],
+            content: [{ type: "text", text: "[ok]" }],
             toolName: "read",
             isError: false,
             toolCallId: "read-1",
@@ -309,7 +309,7 @@ describe("runtime hook registration", () => {
           { role: "assistant", content: "running read" },
           {
             role: "toolResult",
-            content: [{ type: "text", text: "long file body" }],
+            content: [{ type: "text", text: "[ok]" }],
             toolName: "read",
             isError: false,
             toolCallId: "read-1",
@@ -322,11 +322,13 @@ describe("runtime hook registration", () => {
     expect(contextResult.messages?.[0]?.role).toBe("user");
     expect(contextResult.messages?.[1]?.role).toBe("assistant");
     expect(contextResult.messages?.[2]?.role).toBe("toolResult");
-    expect(contextResult.messages?.[2]?.content[0]?.text).toContain("[pruned:");
+    expect(contextResult.messages?.[2]?.content[0]?.text).toBe("[ok]");
 
     const { loadSessionState } = await loadStateStore();
     const persisted = loadSessionState("session-background-index");
     expect(persisted?.pruneTargets).toHaveLength(1);
+    expect(persisted?.tokensSavedByType.background_index ?? 0).toBe(0);
+    expect(persisted?.tokensKeptOutByType.background_index ?? 0).toBe(0);
     expect((persisted as any)?.omitRanges).toBeUndefined();
   });
 
