@@ -2,6 +2,12 @@ import fs from "fs";
 import os from "node:os";
 import path from "path";
 
+export interface IndexedPruneTarget {
+  toolCallId: string;
+  turnIndex: number;
+  replacementText: string;
+}
+
 export interface IndexEntry {
   turnRange: string;
   topic: string;
@@ -9,6 +15,7 @@ export interface IndexEntry {
   timestamp: number;
   messageCount: number;
   indexedAt: number;
+  pruneTargets?: IndexedPruneTarget[];
 }
 
 export function getIndexDir(): string {
@@ -33,5 +40,19 @@ export function readIndexEntries(filePath: string): IndexEntry[] {
     .readFileSync(filePath, "utf8")
     .split("\n")
     .filter((line) => line.trim().length > 0)
-    .map((line) => JSON.parse(line) as IndexEntry);
+    .map((line) => {
+      const parsed = JSON.parse(line) as IndexEntry;
+      return {
+        ...parsed,
+        pruneTargets: Array.isArray(parsed.pruneTargets)
+          ? parsed.pruneTargets.filter((target): target is IndexedPruneTarget => (
+            typeof target === "object" &&
+            target !== null &&
+            typeof target.toolCallId === "string" &&
+            typeof target.turnIndex === "number" &&
+            typeof target.replacementText === "string"
+          ))
+          : [],
+      };
+    });
 }

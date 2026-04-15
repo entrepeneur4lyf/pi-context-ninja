@@ -11,6 +11,7 @@ import type { AnalyticsStore } from "../analytics/types.js";
 import { startDashboardServer, type DashboardServerHandle } from "../dashboard/server.js";
 import { buildCompactionSummary } from "../compression/index-entry.js";
 import { getIndexPath, readIndexEntries } from "../persistence/index-store.js";
+import { applyPruneTargets } from "../strategies/pruning.js";
 
 const sessionMap = new Map<string, SessionState>();
 const analyticsStoresBySession = new Map<string, AnalyticsStore>();
@@ -216,7 +217,18 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
   pi.on("context", async (event, ctx) => {
     const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId, ctx.cwd);
-    return materializeContext(event.messages, { state, config });
+    const omitRanges = state.omitRanges;
+    state.omitRanges = [];
+
+    try {
+      const materialized = materializeContext(event.messages, { state, config });
+      return {
+        ...materialized,
+        messages: applyPruneTargets(materialized.messages ?? event.messages, state.pruneTargets),
+      };
+    } finally {
+      state.omitRanges = omitRanges;
+    }
   });
 
   pi.on("turn_end", async (event, ctx) => {

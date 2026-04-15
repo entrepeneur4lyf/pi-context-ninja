@@ -1,10 +1,11 @@
-import type { IndexEntry } from "../persistence/index-store.js";
+import type { IndexEntry, IndexedPruneTarget } from "../persistence/index-store.js";
 
 export function buildIndexEntry(
   start: number,
   end: number,
   topic: string,
-  count: number
+  count: number,
+  pruneTargets: IndexedPruneTarget[] = [],
 ): IndexEntry {
   return {
     turnRange: `${start}-${end}`,
@@ -13,6 +14,7 @@ export function buildIndexEntry(
     timestamp: Date.now(),
     messageCount: count,
     indexedAt: Date.now(),
+    pruneTargets,
   };
 }
 

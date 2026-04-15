@@ -7,6 +7,25 @@ describe("index entry", () => {
     expect(e.turnRange).toBe("0-10");
     expect(e.topic).toBe("setup");
   });
+
+  it("builds index entries with explicit prune target descriptors", () => {
+    const entry = buildIndexEntry(0, 2, "read output", 1, [
+      {
+        toolCallId: "read-1",
+        turnIndex: 0,
+        replacementText: "[pruned: indexed read result 0-0]",
+      },
+    ]);
+
+    expect(entry.pruneTargets).toEqual([
+      {
+        toolCallId: "read-1",
+        turnIndex: 0,
+        replacementText: "[pruned: indexed read result 0-0]",
+      },
+    ]);
+  });
+
   it("formats TOC", () => {
     const entries: IndexEntry[] = [
       {

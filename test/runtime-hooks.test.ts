@@ -184,6 +184,84 @@ describe("runtime hook registration", () => {
     expect(payload).toEqual({ provider: "openai", body: { model: "gpt-5.4" } });
   });
 
+  it("indexes only tool results for background pruning", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = false;
+    config.dashboard.enabled = false;
+    config.backgroundIndexing.enabled = true;
+    config.backgroundIndexing.minRangeTurns = 1;
+
+    const { calls, pi } = createPiMock();
+    createExtensionRuntime(pi, config);
+
+    const ctx = createContext("session-background-index");
+
+    calls.get("tool_call")?.(
+      {
+        toolCallId: "read-1",
+        toolName: "read",
+        input: { path: "README.md" },
+      },
+      ctx,
+    );
+
+    await calls.get("turn_end")?.(
+      {
+        turnIndex: 3,
+        message: { role: "assistant", content: "done" },
+        toolResults: [
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "long file body" }],
+            toolName: "read",
+            isError: false,
+            toolCallId: "read-1",
+          },
+        ],
+      },
+      ctx,
+    );
+
+    await calls.get("agent_end")?.(
+      {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "show me the file" }] },
+          { role: "assistant", content: "running read" },
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "long file body" }],
+            toolName: "read",
+            isError: false,
+            toolCallId: "read-1",
+          },
+        ],
+      },
+      ctx,
+    );
+
+    const contextResult = (await calls.get("context")?.(
+      {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "show me the file" }] },
+          { role: "assistant", content: "running read" },
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "long file body" }],
+            toolName: "read",
+            isError: false,
+            toolCallId: "read-1",
+          },
+        ],
+      },
+      ctx,
+    )) as { messages?: Array<{ role: string; content: Array<{ type: string; text?: string }> }> };
+
+    expect(contextResult.messages?.[0]?.role).toBe("user");
+    expect(contextResult.messages?.[1]?.role).toBe("assistant");
+    expect(contextResult.messages?.[2]?.role).toBe("toolResult");
+    expect(contextResult.messages?.[2]?.content[0]?.text).toContain("[pruned:");
+  });
+
   it("returns a native compaction result from the indexed TOC when enabled", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;
