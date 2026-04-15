@@ -54,6 +54,10 @@ describe("dashboard server", () => {
       expect(html).toContain("Tokens Kept Out");
       expect(html).toContain("Session");
       expect(html).toContain("session-id");
+      expect(html).toContain("d==null");
+      expect(html).toContain("function resetSnapshotStats()");
+      expect(html).toContain("sessionIdEl.textContent='--'");
+      expect(html).toContain("contextPctEl.textContent='--%'");
       expect(html).not.toContain("Tokens Saved");
 
       const response = await fetch(`${baseUrl}/events`);

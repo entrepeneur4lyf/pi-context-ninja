@@ -22,16 +22,30 @@ pre#events{background:#1a1a1a;padding:1rem;border-radius:8px;max-height:300px;ov
 <script>
 const source=new EventSource('/events');
 const events=document.getElementById('events');
+const sessionIdEl=document.getElementById('session-id');
+const contextPctEl=document.getElementById('ctx-pct');
+const keptOutEl=document.getElementById('kept-out');
+const turnsEl=document.getElementById('turns');
+function resetSnapshotStats(){
+  sessionIdEl.textContent='--';
+  contextPctEl.textContent='--%';
+  keptOutEl.textContent='--';
+  turnsEl.textContent='--';
+}
 source.onmessage=(event)=>{
   const payload=JSON.parse(event.data);
   events.textContent+=payload.type+': '+JSON.stringify(payload.data)+'\\n';
   events.scrollTop=events.scrollHeight;
   if(payload.type==='snapshot'){
     const d=payload.data;
-    if(d?.sessionId)document.getElementById('session-id').textContent=d.sessionId;
-    if(d?.context?.percent!=null)document.getElementById('ctx-pct').textContent=(d.context.percent*100).toFixed(1)+'%';
-    if(d?.totals?.tokensKeptOutApprox!=null)document.getElementById('kept-out').textContent=d.totals.tokensKeptOutApprox.toLocaleString();
-    if(d?.totalTurns!=null)document.getElementById('turns').textContent=d.totalTurns.toLocaleString();
+    if(d==null){
+      resetSnapshotStats();
+      return;
+    }
+    if(d.sessionId)sessionIdEl.textContent=d.sessionId;
+    if(d.context?.percent!=null)contextPctEl.textContent=(d.context.percent*100).toFixed(1)+'%';
+    if(d.totals?.tokensKeptOutApprox!=null)keptOutEl.textContent=d.totals.tokensKeptOutApprox.toLocaleString();
+    if(d.totalTurns!=null)turnsEl.textContent=d.totalTurns.toLocaleString();
   }
 };
 </script></body></html>`;
