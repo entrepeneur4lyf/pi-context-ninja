@@ -31,19 +31,10 @@ describe("state store", () => {
   });
 
   it("saves and loads persisted session state", async () => {
-    const { saveSessionState, loadSessionState } = await loadStateStore();
+    const { saveSessionState, loadSessionState, getStatePath } = await loadStateStore();
     const s = createSessionState("/tmp");
     s.currentTurn = 5;
     s.tokensKeptOutTotal = 1000;
-    s.omitRanges.push({
-      startTurn: 2,
-      endTurn: 4,
-      startOffset: 1,
-      endOffset: 6,
-      indexedAt: 777,
-      summaryRef: "2-4",
-      messageCount: 6,
-    });
     s.pruneTargets.push({
       toolCallId: "call-2",
       turnIndex: 4,
@@ -73,11 +64,13 @@ describe("state store", () => {
     });
 
     saveSessionState("s1", s);
+    const persistedJson = JSON.parse(fs.readFileSync(getStatePath("s1"), "utf8"));
     const loaded = loadSessionState("s1");
 
     expect(loaded).not.toBeNull();
     expect(loaded?.currentTurn).toBe(5);
     expect(loaded?.tokensKeptOutTotal).toBe(1000);
+    expect(persistedJson).not.toHaveProperty("omitRanges");
     expect(loaded?.toolCalls).toEqual([
       [
         "call-1",
@@ -88,17 +81,7 @@ describe("state store", () => {
       ],
     ]);
     expect(loaded?.prunedToolIds).toEqual(["call-2"]);
-    expect(loaded?.omitRanges).toEqual([
-      {
-        startTurn: 2,
-        endTurn: 4,
-        startOffset: 1,
-        endOffset: 6,
-        indexedAt: 777,
-        summaryRef: "2-4",
-        messageCount: 6,
-      },
-    ]);
+    expect((loaded as any)?.omitRanges).toBeUndefined();
     expect(loaded?.pruneTargets).toEqual([
       {
         toolCallId: "call-2",
@@ -130,7 +113,7 @@ describe("state store", () => {
     expect(fs.readdirSync(stateDir).some((entry) => entry.endsWith(".tmp"))).toBe(false);
   });
 
-  it("hydrates turnRange-style omit ranges while leaving prune targets empty", async () => {
+  it("drops legacy omit ranges on load instead of rehydrating them", async () => {
     const { loadSessionState, getStatePath } = await loadStateStore();
     const statePath = getStatePath("legacy");
     const legacy = {
@@ -187,17 +170,7 @@ describe("state store", () => {
     expect(loaded?.tokensKeptOutTotal).toBe(111);
     expect(loaded?.tokensSaved).toBe(222);
     expect(loaded?.projectPath).toBe("/tmp/project");
-    expect(loaded?.omitRanges).toEqual([
-      {
-        startTurn: 1,
-        endTurn: 2,
-        startOffset: 2,
-        endOffset: 8,
-        indexedAt: 111,
-        summaryRef: "sum-1",
-        messageCount: 2,
-      },
-    ]);
+    expect((loaded as any)?.omitRanges).toBeUndefined();
     expect(loaded?.pruneTargets).toEqual([]);
     expect(loaded?.turnHistory[0]).toMatchObject({
       turnIndex: 0,

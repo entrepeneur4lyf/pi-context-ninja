@@ -1,30 +1,13 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { OmitRange, PruneTarget } from "../types.js";
-import { isToolResultMessage, replaceToolContentWithText } from "../messages.js";
+import type { PruneTarget } from "../types.js";
+import {
+  countToolTextBlocks,
+  isToolResultMessage,
+  replaceSingleToolTextContent,
+} from "../messages.js";
 
-export function applyOmitRanges(
-  messages: AgentMessage[],
-  omitRanges: OmitRange[],
-): AgentMessage[] {
-  if (omitRanges.length === 0) {
-    return [...messages];
-  }
-
-  const omit = new Set<number>();
-
-  for (const range of omitRanges) {
-    const start = Math.max(0, Math.min(messages.length - 1, range.startOffset));
-    const end = Math.max(0, Math.min(messages.length - 1, range.endOffset));
-    if (end < start) {
-      continue;
-    }
-
-    for (let index = start; index <= end; index += 1) {
-      omit.add(index);
-    }
-  }
-
-  return messages.filter((_, index) => !omit.has(index));
+export function canApplyPruneTarget(message: AgentMessage): boolean {
+  return isToolResultMessage(message) && countToolTextBlocks(message) === 1;
 }
 
 export function applyPruneTargets(
@@ -43,7 +26,7 @@ export function applyPruneTargets(
     }
 
     const toolCallId = (message as any).toolCallId;
-    if (typeof toolCallId !== "string") {
+    if (typeof toolCallId !== "string" || !canApplyPruneTarget(message)) {
       return message;
     }
 
@@ -52,7 +35,7 @@ export function applyPruneTargets(
       return message;
     }
 
-    return replaceToolContentWithText(message, replacementText);
+    return replaceSingleToolTextContent(message, replacementText);
   });
 }
 

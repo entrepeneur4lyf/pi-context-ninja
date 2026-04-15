@@ -49,7 +49,7 @@ describe("index-store", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("does not create broad omit ranges when no tool results are present", () => {
+  it("does not create prune targets when no tool results are present", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-index-manager-"));
     process.env.PCN_INDEX_DIR = tmpDir;
 
@@ -101,12 +101,85 @@ describe("index-store", () => {
 
     refreshRangeIndex(messages, state, config, "/workspace/project-a");
 
-    expect(state.omitRanges).toHaveLength(0);
     expect(state.pruneTargets).toHaveLength(0);
 
     const entries = readIndexEntries(getIndexPath("/workspace/project-a"));
     expect(entries).toHaveLength(0);
     expect(readIndexEntries(getIndexPath("session-1"))).toEqual([]);
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    delete process.env.PCN_INDEX_DIR;
+  });
+
+  it("indexes only tool results with a safe single text block", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-index-manager-"));
+    process.env.PCN_INDEX_DIR = tmpDir;
+
+    const state = createSessionState("session-1");
+    state.currentTurn = 4;
+    state.toolCalls.set("safe", {
+      toolCallId: "safe",
+      toolName: "read",
+      inputArgs: { path: "a.ts" },
+      inputFingerprint: "{\"path\":\"a.ts\"}",
+      isError: false,
+      turnIndex: 0,
+      timestamp: 1,
+      tokenEstimate: 10,
+    });
+    state.toolCalls.set("unsafe", {
+      toolCallId: "unsafe",
+      toolName: "read",
+      inputArgs: { path: "b.ts" },
+      inputFingerprint: "{\"path\":\"b.ts\"}",
+      isError: false,
+      turnIndex: 0,
+      timestamp: 2,
+      tokenEstimate: 10,
+    });
+
+    const messages = [
+      {
+        role: "toolResult",
+        toolCallId: "safe",
+        toolName: "read",
+        isError: false,
+        content: [
+          { type: "image", data: "img-data", mimeType: "image/png" },
+          { type: "text", text: "safe file body" },
+        ],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "unsafe",
+        toolName: "read",
+        isError: false,
+        content: [
+          { type: "text", text: "first block" },
+          { type: "image", data: "img-data", mimeType: "image/png" },
+          { type: "text", text: "second block" },
+        ],
+      },
+    ] as any;
+
+    const config = defaultConfig();
+    config.backgroundIndexing.enabled = true;
+    config.backgroundIndexing.minRangeTurns = 1;
+
+    const pruneTargets = refreshRangeIndex(messages, state, config, "/workspace/project-a");
+
+    expect(pruneTargets).toEqual([
+      expect.objectContaining({
+        toolCallId: "safe",
+      }),
+    ]);
+    expect(state.pruneTargets).toHaveLength(1);
+    expect(state.pruneTargets[0]?.toolCallId).toBe("safe");
+    expect(readIndexEntries(getIndexPath("/workspace/project-a"))[0]?.pruneTargets).toEqual([
+      expect.objectContaining({
+        toolCallId: "safe",
+      }),
+    ]);
 
     fs.rmSync(tmpDir, { recursive: true, force: true });
     delete process.env.PCN_INDEX_DIR;

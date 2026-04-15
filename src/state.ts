@@ -1,7 +1,6 @@
 import type {
   PersistedSessionState,
   SessionState,
-  OmitRange,
   ToolRecord,
 } from "./types.js";
 
@@ -10,7 +9,6 @@ export function createSessionState(projectPath: string): SessionState {
     toolCalls: new Map(),
     prunedToolIds: new Set(),
     pruneTargets: [],
-    omitRanges: [],
     tokensKeptOutTotal: 0,
     tokensSaved: 0,
     tokensKeptOutByType: {},
@@ -77,7 +75,6 @@ export function serializeSessionState(state: SessionState): PersistedSessionStat
       serializeToolRecord(record),
     ]),
     prunedToolIds: [...state.prunedToolIds],
-    omitRanges: state.omitRanges.map((range) => ({ ...range })),
     pruneTargets: state.pruneTargets.map((target) => ({ ...target })),
     tokensKeptOutTotal: state.tokensKeptOutTotal,
     tokensSaved: state.tokensSaved,
@@ -100,7 +97,6 @@ export function hydrateSessionState(persisted: PersistedSessionState): SessionSt
       hydrateToolRecord(record),
     ])),
     prunedToolIds: new Set(persisted.prunedToolIds),
-    omitRanges: persisted.omitRanges.map((range) => ({ ...range })),
     pruneTargets: persisted.pruneTargets.map((target) => ({ ...target })),
     tokensKeptOutTotal: persisted.tokensKeptOutTotal,
     tokensSaved: persisted.tokensSaved,
@@ -128,7 +124,6 @@ export function normalizePersistedSessionState(input: unknown): PersistedSession
   return {
     toolCalls: normalizeToolCalls(input.toolCalls),
     prunedToolIds: normalizeStringArray(input.prunedToolIds),
-    omitRanges: normalizeOmitRanges(input.omitRanges, turnHistory),
     pruneTargets: normalizePruneTargets(input.pruneTargets),
     tokensKeptOutTotal: normalizeNumber(input.tokensKeptOutTotal),
     tokensSaved: normalizeNumber(input.tokensSaved),
@@ -184,58 +179,6 @@ function normalizeStringArray(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
-function normalizeOmitRanges(
-  value: unknown,
-  turnHistory: Array<ReturnType<typeof normalizeTurnSnapshot>>,
-): OmitRange[] {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter(isRecord).flatMap((range) => {
-    const turnBounds = parseRangeTurns(range);
-    if (!turnBounds) {
-      return [];
-    }
-
-    const { startTurn, endTurn } = turnBounds;
-    const startOffset = normalizeNullableNumber(range.startOffset);
-    const endOffset = normalizeNullableNumber(range.endOffset);
-    const indexedAt = normalizeNullableNumber(range.indexedAt);
-    const messageCount = normalizeNullableNumber(range.messageCount);
-    const summaryRef = typeof range.summaryRef === "string" && range.summaryRef.length > 0
-      ? range.summaryRef
-      : `${startTurn}-${endTurn}`;
-    const resolvedOffsets = startOffset !== null && endOffset !== null
-      ? { startOffset, endOffset }
-      : resolveTurnOffsets(
-          turnHistory,
-          startTurn,
-          endTurn,
-          messageCount ?? 0,
-        );
-
-    if (
-      indexedAt === null ||
-      messageCount === null ||
-      resolvedOffsets.startOffset === null ||
-      resolvedOffsets.endOffset === null
-    ) {
-      return [];
-    }
-
-    return [{
-      startTurn,
-      endTurn,
-      startOffset: resolvedOffsets.startOffset,
-      endOffset: resolvedOffsets.endOffset,
-      indexedAt,
-      summaryRef,
-      messageCount,
-    }];
-  });
-}
-
 function normalizePruneTargets(value: unknown) {
   if (!Array.isArray(value)) {
     return [];
@@ -263,55 +206,6 @@ function normalizePruneTargets(value: unknown) {
       replacementText: target.replacementText,
     }];
   });
-}
-
-function parseRangeTurns(range: Record<string, unknown>): { startTurn: number; endTurn: number } | null {
-  const startTurn = normalizeNullableNumber(range.startTurn);
-  const endTurn = normalizeNullableNumber(range.endTurn);
-
-  if (startTurn !== null && endTurn !== null) {
-    return { startTurn, endTurn };
-  }
-
-  if (typeof range.turnRange === "string") {
-    const match = range.turnRange.match(/^(\d+)\s*-\s*(\d+)$/);
-    if (match) {
-      return {
-        startTurn: Number.parseInt(match[1] ?? "0", 10),
-        endTurn: Number.parseInt(match[2] ?? "0", 10),
-      };
-    }
-  }
-
-  return null;
-}
-
-function resolveTurnOffsets(
-  turnHistory: Array<ReturnType<typeof normalizeTurnSnapshot>>,
-  startTurn: number,
-  endTurn: number,
-  messageCount: number,
-): { startOffset: number | null; endOffset: number | null } {
-  const previousTurn = turnHistory.find((entry) => entry.turnIndex === startTurn - 1);
-  const endTurnEntry = turnHistory.find((entry) => entry.turnIndex === endTurn);
-
-  if (startTurn > 0 && !previousTurn) {
-    return { startOffset: null, endOffset: null };
-  }
-  if (!endTurnEntry) {
-    return { startOffset: null, endOffset: null };
-  }
-
-  const startOffset = previousTurn?.messageCountAfterTurn ?? 0;
-  const derivedEndOffset = endTurnEntry.messageCountAfterTurn - 1;
-  const endOffset = derivedEndOffset >= startOffset
-    ? derivedEndOffset
-    : startOffset + Math.max(0, messageCount - 1);
-
-  return {
-    startOffset,
-    endOffset,
-  };
 }
 
 function normalizeTurnSnapshot(value: unknown) {

@@ -12,16 +12,6 @@ export interface ToolRecord {
   shapedContent?: (TextContent | ImageContent)[];
 }
 
-export interface OmitRange {
-  startTurn: number;
-  endTurn: number;
-  startOffset: number;
-  endOffset: number;
-  indexedAt: number;
-  summaryRef: string;
-  messageCount: number;
-}
-
 export interface PruneTarget {
   toolCallId: string;
   turnIndex: number;
@@ -44,7 +34,6 @@ export type PersistedToolCall = [string, ToolRecord];
 export interface PersistedSessionState {
   toolCalls: PersistedToolCall[];
   prunedToolIds: string[];
-  omitRanges: OmitRange[];
   pruneTargets: PruneTarget[];
   tokensKeptOutTotal: number;
   tokensSaved: number;
@@ -71,7 +60,6 @@ export interface SessionState {
   toolCalls: Map<string, ToolRecord>;
   prunedToolIds: Set<string>;
   pruneTargets: PruneTarget[];
-  omitRanges: OmitRange[];
   tokensKeptOutTotal: number;
   tokensSaved: number;
   tokensKeptOutByType: Record<string, number>;

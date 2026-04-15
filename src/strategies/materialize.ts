@@ -14,7 +14,6 @@ import { codeFilter, detectLanguage } from "./code-filter.js";
 import { headTailTruncate } from "./truncation.js";
 import { fingerprintDedup, normalizeContent } from "./dedup.js";
 import { shouldPurgeError, makeErrorTombstone } from "./error-purge.js";
-import { applyOmitRanges } from "./pruning.js";
 
 export interface MaterializeOptions {
   state: SessionState;
@@ -165,6 +164,5 @@ export function materializeContext(
     return msg;
   });
 
-  const final = applyOmitRanges(processed, state.omitRanges);
-  return { messages: final };
+  return { messages: processed };
 }

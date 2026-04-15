@@ -221,18 +221,11 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
   pi.on("context", async (event, ctx) => {
     const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId, ctx.cwd);
-    const omitRanges = state.omitRanges;
-    state.omitRanges = [];
-
-    try {
-      const materialized = materializeContext(event.messages, { state, config });
-      return {
-        ...materialized,
-        messages: applyPruneTargets(materialized.messages ?? event.messages, state.pruneTargets),
-      };
-    } finally {
-      state.omitRanges = omitRanges;
-    }
+    const materialized = materializeContext(event.messages, { state, config });
+    return {
+      ...materialized,
+      messages: applyPruneTargets(materialized.messages ?? event.messages, state.pruneTargets),
+    };
   });
 
   pi.on("turn_end", async (event, ctx) => {

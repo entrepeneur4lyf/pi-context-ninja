@@ -47,7 +47,42 @@ describe("pruning", () => {
     ).toEqual(messages);
   });
 
-  it("collapses targeted mixed-content tool results to prune text while preserving conversation messages", () => {
+  it("rewrites safe single-text mixed-content tool results without dropping non-text payloads", () => {
+    const messages = [
+      { role: "user", content: [{ type: "text", text: "need file status" }] },
+      { role: "assistant", content: "running read" },
+      {
+        role: "toolResult",
+        toolCallId: "read-1",
+        toolName: "read",
+        isError: false,
+        content: [
+          { type: "image", data: "img-data", mimeType: "image/png" },
+          { type: "text", text: "very long file body" },
+        ],
+      },
+    ] as any;
+
+    const result = applyPruneTargets(messages, [
+      {
+        toolCallId: "read-1",
+        turnIndex: 1,
+        indexedAt: 123,
+        summaryRef: "1-1",
+        replacementText: "[pruned: indexed read result 1-1]",
+      },
+    ]);
+
+    expect(result).toHaveLength(3);
+    expect((result[0] as any).role).toBe("user");
+    expect((result[1] as any).role).toBe("assistant");
+    expect((result[2] as any).content).toEqual([
+      { type: "image", data: "img-data", mimeType: "image/png" },
+      { type: "text", text: "[pruned: indexed read result 1-1]" },
+    ]);
+  });
+
+  it("skips targeted multi-text mixed-content tool results to avoid dropping payloads", () => {
     const messages = [
       { role: "user", content: [{ type: "text", text: "need file status" }] },
       { role: "assistant", content: "running read" },
@@ -77,8 +112,6 @@ describe("pruning", () => {
     expect(result).toHaveLength(3);
     expect((result[0] as any).role).toBe("user");
     expect((result[1] as any).role).toBe("assistant");
-    expect((result[2] as any).content).toEqual([
-      { type: "text", text: "[pruned: indexed read result 1-1]" },
-    ]);
+    expect(result).toEqual(messages);
   });
 });

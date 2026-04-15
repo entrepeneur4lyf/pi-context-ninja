@@ -269,7 +269,7 @@ describe("runtime hook registration", () => {
     const { loadSessionState } = await loadStateStore();
     const persisted = loadSessionState("session-background-index");
     expect(persisted?.pruneTargets).toHaveLength(1);
-    expect(persisted?.omitRanges).toEqual([]);
+    expect((persisted as any)?.omitRanges).toBeUndefined();
   });
 
   it("skips error tool results when generating prune targets", async () => {
@@ -330,11 +330,11 @@ describe("runtime hook registration", () => {
     const { loadSessionState } = await loadStateStore();
     const persisted = loadSessionState("session-error-result");
     expect(persisted?.pruneTargets).toEqual([]);
-    expect(persisted?.omitRanges).toEqual([]);
+    expect((persisted as any)?.omitRanges).toBeUndefined();
     expect(readIndexEntries(getIndexPath("/tmp/project"))).toEqual([]);
   });
 
-  it("backfills prune targets when only legacy omit ranges are present", async () => {
+  it("drops legacy omit ranges instead of backfilling prune targets from them", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;
     config.dashboard.enabled = false;
@@ -421,7 +421,7 @@ describe("runtime hook registration", () => {
     const { loadSessionState } = await loadStateStore();
     const persisted = loadSessionState(sessionId);
     expect(persisted?.pruneTargets).toHaveLength(1);
-    expect(persisted?.omitRanges).toHaveLength(1);
+    expect((persisted as any)?.omitRanges).toBeUndefined();
     expect(readIndexEntries(getIndexPath("/tmp/project"))).toHaveLength(1);
   });
 

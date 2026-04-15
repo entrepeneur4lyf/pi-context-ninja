@@ -6,6 +6,7 @@ import { appendIndexEntry, getIndexPath } from "../persistence/index-store.js";
 import type { PCNConfig } from "../config.js";
 import type { PruneTarget, SessionState } from "../types.js";
 import { isToolResultMessage } from "../messages.js";
+import { canApplyPruneTarget } from "../strategies/pruning.js";
 
 export function refreshRangeIndex(
   messages: AgentMessage[],
@@ -34,6 +35,7 @@ export function refreshRangeIndex(
       record !== undefined &&
       !record.isError &&
       !(message as any).isError &&
+      canApplyPruneTarget(message) &&
       record.turnIndex >= stale.startTurn &&
       record.turnIndex <= stale.endTurn
     );
@@ -75,22 +77,4 @@ export function refreshRangeIndex(
   state.pruneTargets.push(...pruneTargets);
 
   return pruneTargets;
-}
-
-export function resolveTurnOffsets(
-  state: SessionState,
-  startTurn: number,
-  endTurn: number,
-): { startOffset: number; endOffset: number } | null {
-  const previousTurn = state.turnHistory.find((entry) => entry.turnIndex === startTurn - 1);
-  const endTurnEntry = state.turnHistory.find((entry) => entry.turnIndex === endTurn);
-
-  const startOffset = previousTurn?.messageCountAfterTurn ?? 0;
-  const endOffset = endTurnEntry ? endTurnEntry.messageCountAfterTurn - 1 : startOffset - 1;
-
-  if (endOffset < startOffset) {
-    return null;
-  }
-
-  return { startOffset, endOffset };
 }
