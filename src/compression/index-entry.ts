@@ -1,4 +1,4 @@
-import { IndexEntry } from "./index-store";
+import type { IndexEntry } from "../persistence/index-store.js";
 
 export function buildIndexEntry(
   start: number,

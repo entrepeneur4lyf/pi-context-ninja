@@ -13,9 +13,10 @@ export interface ToolRecord {
 }
 
 export interface OmitRange {
-  startKey: string;
-  endKey: string;
-  turnRange: string;
+  startTurn: number;
+  endTurn: number;
+  startOffset: number;
+  endOffset: number;
   indexedAt: number;
   summaryRef: string;
   messageCount: number;

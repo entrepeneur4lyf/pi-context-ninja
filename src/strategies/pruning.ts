@@ -9,44 +9,23 @@ export function applyOmitRanges(
     return [...messages];
   }
 
-  const keys = messages.map(msgKey);
-  const keyToIndex = new Map<string, number>();
-
-  keys.forEach((key, index) => {
-    if (key && !keyToIndex.has(key)) {
-      keyToIndex.set(key, index);
-    }
-  });
-
-  const omitSet = new Set<string>();
+  const omit = new Set<number>();
 
   for (const range of omitRanges) {
-    const startIndex = keyToIndex.get(range.startKey);
-    const endIndex = keyToIndex.get(range.endKey);
-
-    if (startIndex === undefined || endIndex === undefined) {
+    const start = Math.max(0, Math.min(messages.length - 1, range.startOffset));
+    const end = Math.max(0, Math.min(messages.length - 1, range.endOffset));
+    if (end < start) {
       continue;
     }
 
-    const [from, to] = startIndex <= endIndex
-      ? [startIndex, endIndex]
-      : [endIndex, startIndex];
-
-    for (let index = from; index <= to; index += 1) {
-      const key = keys[index];
-      if (key) {
-        omitSet.add(key);
-      }
+    for (let index = start; index <= end; index += 1) {
+      omit.add(index);
     }
   }
 
-  return messages.filter((message) => !omitSet.has(msgKey(message)));
+  return messages.filter((_, index) => !omit.has(index));
 }
 
 export function createTombstone(strategy: string): string {
   return `[pruned by ${strategy}]`;
-}
-
-function msgKey(msg: AgentMessage): string {
-  return (msg as any)._key ?? (msg as any).toolCallId ?? (msg as any).id ?? "";
 }

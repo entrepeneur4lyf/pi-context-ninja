@@ -100,8 +100,6 @@ describe("state store", () => {
     const legacy = {
       omitRanges: [
         {
-          startKey: "a",
-          endKey: "b",
           turnRange: "1-2",
           indexedAt: 111,
           summaryRef: "sum-1",
@@ -115,8 +113,17 @@ describe("state store", () => {
       tokensSavedByType: { dedup: 22 },
       turnHistory: [
         {
-          turnIndex: 6,
+          turnIndex: 0,
           toolCount: 1,
+          messageCountAfterTurn: 2,
+          tokensKeptOutDelta: 0,
+          tokensSavedDelta: 0,
+          timestamp: 111,
+        },
+        {
+          turnIndex: 2,
+          toolCount: 1,
+          messageCountAfterTurn: 9,
           tokensKeptOutDelta: 33,
           tokensSavedDelta: 44,
           timestamp: 555,
@@ -135,11 +142,21 @@ describe("state store", () => {
     expect(loaded?.tokensKeptOutTotal).toBe(111);
     expect(loaded?.tokensSaved).toBe(222);
     expect(loaded?.projectPath).toBe("/tmp/project");
-    expect(loaded?.omitRanges).toEqual(legacy.omitRanges);
+    expect(loaded?.omitRanges).toEqual([
+      {
+        startTurn: 1,
+        endTurn: 2,
+        startOffset: 2,
+        endOffset: 8,
+        indexedAt: 111,
+        summaryRef: "sum-1",
+        messageCount: 2,
+      },
+    ]);
     expect(loaded?.turnHistory[0]).toMatchObject({
-      turnIndex: 6,
+      turnIndex: 0,
       toolCount: 1,
-      messageCountAfterTurn: 0,
+      messageCountAfterTurn: 2,
     });
     expect(loaded?.toolCalls).toEqual([]);
     expect(loaded?.prunedToolIds).toEqual([]);

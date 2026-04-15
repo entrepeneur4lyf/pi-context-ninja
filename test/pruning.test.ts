@@ -2,7 +2,7 @@ import { describe, it, expect } from "vitest";
 import { applyOmitRanges } from "../src/strategies/pruning";
 
 describe("pruning", () => {
-  it("filters omitted ranges", () => {
+  it("filters omitted ranges using transcript offsets", () => {
     const messages = [
       { role: "u", _k: "a", _key: "a" },
       { role: "a", _k: "b", _key: "b" },
@@ -11,9 +11,10 @@ describe("pruning", () => {
     ] as any;
     const ranges = [
       {
-        startKey: "b",
-        endKey: "c",
-        turnRange: "1-2",
+        startTurn: 1,
+        endTurn: 2,
+        startOffset: 1,
+        endOffset: 2,
         indexedAt: 0,
         summaryRef: "",
         messageCount: 2,

@@ -4,6 +4,7 @@ import { loadSessionState, resolveSessionId, saveSessionState } from "../persist
 import type { PCNConfig } from "../config.js";
 import { materializeContext } from "../strategies/materialize.js";
 import type { SessionState } from "../types.js";
+import { refreshRangeIndex } from "./index-manager.js";
 
 const sessionMap = new Map<string, SessionState>();
 
@@ -105,8 +106,10 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
 
   pi.on("session_before_compact", (_event, _ctx) => undefined);
 
-  pi.on("agent_end", (_event, ctx) => {
+  pi.on("agent_end", (event, ctx) => {
     const sessionId = resolveSessionId(ctx);
+    const state = getState(sessionId);
+    refreshRangeIndex(event.messages, state, config);
     persistState(sessionId);
   });
 

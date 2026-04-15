@@ -1,4 +1,5 @@
 import fs from "fs";
+import os from "node:os";
 import path from "path";
 
 export interface IndexEntry {
@@ -8,6 +9,14 @@ export interface IndexEntry {
   timestamp: number;
   messageCount: number;
   indexedAt: number;
+}
+
+export function getIndexDir(): string {
+  return path.resolve(process.env.PCN_INDEX_DIR ?? path.join(os.homedir(), ".pi-ninja", "index"));
+}
+
+export function getIndexPath(indexId: string): string {
+  return path.join(getIndexDir(), `${encodeURIComponent(indexId)}.jsonl`);
 }
 
 export function appendIndexEntry(filePath: string, entry: IndexEntry): void {

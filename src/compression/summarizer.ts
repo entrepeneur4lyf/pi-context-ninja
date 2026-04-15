@@ -1,12 +1,13 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import { extractTextContent } from "../messages.js";
+
 export function extractTopicFromRange(messages: AgentMessage[]): string {
-  const texts: string[] = [];
-  for (const m of messages) {
-    const c = (m as any).content;
-    if (typeof c === "string") texts.push(c);
-    else if (Array.isArray(c)) for (const p of c) if (p.type === "text") texts.push(p.text);
+  const texts = messages.map((message) => extractTextContent(message)).filter((text) => text.length > 0);
+  const firstLine = texts.slice(0, 3).join(" ").split("\n")[0] ?? "";
+
+  if (firstLine.length > 100) {
+    return `${firstLine.slice(0, 100)}...`;
   }
-  const f = texts.slice(0, 3).join(" ").split("\n")[0];
-  if (f.length > 100) return f.slice(0, 100) + "...";
-  return f || "no content";
+
+  return firstLine || "no content";
 }
