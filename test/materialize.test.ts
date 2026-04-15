@@ -168,6 +168,43 @@ describe("materialize", () => {
     expect(toolMsg.content).toEqual(msgs[0].content);
   });
 
+  it("leaves recent multi-line error tool results unchanged even when truncation is enabled", () => {
+    const state = createSessionState("/tmp");
+    state.currentTurn = 2;
+    state.toolCalls.set("t1", {
+      toolCallId: "t1",
+      toolName: "bash",
+      inputArgs: {},
+      inputFingerprint: "bash::{}",
+      isError: true,
+      turnIndex: 2,
+      timestamp: Date.now(),
+      tokenEstimate: 10,
+    });
+
+    const cfg = defaultConfig();
+    cfg.strategies.truncation.enabled = true;
+    cfg.strategies.truncation.headLines = 1;
+    cfg.strategies.truncation.tailLines = 1;
+    cfg.strategies.truncation.minLines = 2;
+    cfg.strategies.errorPurge.enabled = false;
+
+    const msgs = [
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: "line 1\nline 2\nline 3" }],
+        toolName: "bash",
+        isError: true,
+        toolCallId: "t1",
+        _key: "t1",
+      },
+    ] as any;
+
+    const result = materializeContext(msgs, { state, config: cfg });
+
+    expect(result.messages?.[0]).toEqual(msgs[0]);
+  });
+
   it("tombstones stale mixed-content error tool results", () => {
     const state = createSessionState("/tmp");
     state.currentTurn = 10;
@@ -214,6 +251,56 @@ describe("materialize", () => {
         text: "[Error output removed -- tool failed more than 3 turns ago]",
       },
     ]);
+  });
+
+  it("tombstones stale mixed-content error tool results and records purge savings with truncation enabled", () => {
+    const state = createSessionState("/tmp");
+    state.currentTurn = 10;
+    state.toolCalls.set("t1", {
+      toolCallId: "t1",
+      toolName: "bash",
+      inputArgs: {},
+      inputFingerprint: "bash::{}",
+      isError: true,
+      turnIndex: 2,
+      timestamp: Date.now(),
+      tokenEstimate: 10,
+    });
+
+    const cfg = defaultConfig();
+    cfg.strategies.errorPurge.enabled = true;
+    cfg.strategies.errorPurge.maxTurnsAgo = 3;
+    cfg.strategies.truncation.enabled = true;
+    cfg.strategies.truncation.headLines = 1;
+    cfg.strategies.truncation.tailLines = 1;
+    cfg.strategies.truncation.minLines = 2;
+
+    const msgs = [
+      {
+        role: "toolResult",
+        content: [
+          { type: "text", text: ["error line 1", "error line 2", "error line 3", "error line 4", "error line 5"].join("\n") },
+          { type: "image", data: "img-data", mimeType: "image/png" },
+          { type: "text", text: ["error line 6", "error line 7", "error line 8", "error line 9", "error line 10"].join("\n") },
+        ],
+        toolName: "bash",
+        isError: true,
+        toolCallId: "t1",
+        _key: "t1",
+      },
+    ] as any;
+
+    const result = materializeContext(msgs, { state, config: cfg });
+    const toolMsg = result.messages?.[0] as any;
+
+    expect(toolMsg.content).toEqual([
+      {
+        type: "text",
+        text: "[Error output removed -- tool failed more than 3 turns ago]",
+      },
+    ]);
+    expect(state.tokensSavedByType.error_purge ?? 0).toBeGreaterThan(0);
+    expect(state.tokensKeptOutByType.error_purge ?? 0).toBeGreaterThan(0);
   });
 
   it("still advances dedup tracking for mixed-content tool results", () => {

@@ -39,6 +39,33 @@ export function materializeContext(
     const toolName = (msg as any).toolName ?? "";
     const toolCallId = (msg as any).toolCallId ?? "";
     const isErr = !!(msg as any).isError;
+
+    if (isErr) {
+      if (config.strategies.errorPurge.enabled) {
+        const rec = state.toolCalls.get(toolCallId);
+        const errorTurnIndex = rec?.turnIndex ?? state.currentTurn;
+        if (
+          shouldPurgeError(
+            errorTurnIndex,
+            state.currentTurn,
+            config.strategies.errorPurge.maxTurnsAgo,
+          )
+        ) {
+          const candidate = makeErrorTombstone(config.strategies.errorPurge.maxTurnsAgo);
+          creditSavings(
+            state,
+            toolCallId,
+            "error_purge",
+            Math.max(0, originalText.length - candidate.length),
+            Math.max(0, originalText.length - candidate.length),
+          );
+          return replaceToolContentWithText(msg, candidate);
+        }
+      }
+
+      return msg;
+    }
+
     let dedupText = originalText;
     let rewriteText: string | null = null;
 
@@ -128,28 +155,6 @@ export function materializeContext(
           );
           rewriteText = candidate;
         }
-      }
-    }
-
-    if (config.strategies.errorPurge.enabled && isErr) {
-      const rec = state.toolCalls.get(toolCallId);
-      const errorTurnIndex = rec?.turnIndex ?? state.currentTurn;
-      if (
-        shouldPurgeError(
-          errorTurnIndex,
-          state.currentTurn,
-          config.strategies.errorPurge.maxTurnsAgo,
-        )
-      ) {
-        const candidate = makeErrorTombstone(config.strategies.errorPurge.maxTurnsAgo);
-        creditSavings(
-          state,
-          toolCallId,
-          "error_purge",
-          Math.max(0, dedupText.length - candidate.length),
-          Math.max(0, dedupText.length - candidate.length),
-        );
-        return replaceToolContentWithText(msg, candidate);
       }
     }
 
