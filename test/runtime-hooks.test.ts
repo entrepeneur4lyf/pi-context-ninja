@@ -129,6 +129,50 @@ describe("runtime hook registration", () => {
     expect(second).toBeUndefined();
   });
 
+  it("persists once-per-session system hint state across runtime reloads", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = false;
+    config.dashboard.enabled = false;
+    config.systemHint.enabled = true;
+    config.systemHint.frequency = "once_per_session";
+    config.systemHint.text = "Keep the context small.";
+
+    const sessionId = "session-hint-persisted";
+    const ctx = createContext(sessionId);
+
+    const firstRuntime = createPiMock();
+    createExtensionRuntime(firstRuntime.pi, config);
+
+    const first = await firstRuntime.calls.get("before_agent_start")?.(
+      {
+        type: "before_agent_start",
+        prompt: "question",
+        images: undefined,
+        systemPrompt: "base",
+      },
+      ctx,
+    );
+
+    expect(first).toEqual({ systemPrompt: "base\n\nKeep the context small." });
+
+    await firstRuntime.calls.get("session_shutdown")?.({ type: "session_shutdown" }, ctx);
+
+    const secondRuntime = createPiMock();
+    createExtensionRuntime(secondRuntime.pi, config);
+
+    const second = await secondRuntime.calls.get("before_agent_start")?.(
+      {
+        type: "before_agent_start",
+        prompt: "question",
+        images: undefined,
+        systemPrompt: "base",
+      },
+      ctx,
+    );
+
+    expect(second).toBeUndefined();
+  });
+
   it("re-applies the system hint when frequency is on_change and the text changes", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;
@@ -1037,5 +1081,231 @@ describe("runtime hook registration", () => {
     ]);
     expect(persisted?.pruneTargets).toEqual([]);
     expect(readIndexEntries(getIndexPath("/tmp/project"))).toEqual([]);
+  });
+
+  it("rebuilds missing tool records from context messages so historical sessions still age stale errors and index old results", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = false;
+    config.dashboard.enabled = false;
+    config.backgroundIndexing.enabled = true;
+    config.backgroundIndexing.minRangeTurns = 1;
+    config.strategies.shortCircuit.enabled = false;
+    config.strategies.codeFilter.enabled = false;
+    config.strategies.truncation.enabled = false;
+    config.strategies.errorPurge.enabled = true;
+    config.strategies.errorPurge.maxTurnsAgo = 3;
+    config.strategies.deduplication.enabled = false;
+
+    const sessionId = "session-rebuild-from-context";
+    writeLegacyState(sessionId, {
+      toolCalls: [],
+      prunedToolIds: [],
+      pruneTargets: [],
+      lastIndexedTurn: -1,
+      tokensKeptOutTotal: 0,
+      tokensSaved: 0,
+      tokensKeptOutByType: {},
+      tokensSavedByType: {},
+      currentTurn: 9,
+      countedSavingsIds: [],
+      turnHistory: [
+        {
+          turnIndex: 0,
+          toolCount: 1,
+          messageCountAfterTurn: 3,
+          tokensKeptOutDelta: 0,
+          tokensSavedDelta: 0,
+          timestamp: 111,
+        },
+        {
+          turnIndex: 9,
+          toolCount: 0,
+          messageCountAfterTurn: 9,
+          tokensKeptOutDelta: 0,
+          tokensSavedDelta: 0,
+          timestamp: 222,
+        },
+      ],
+      projectPath: "/tmp/project",
+      lastContextTokens: null,
+      lastContextPercent: null,
+      lastContextWindow: null,
+    });
+
+    const { calls, pi } = createPiMock();
+    createExtensionRuntime(pi, config);
+
+    const ctx = createContext(sessionId);
+    const contextResult = await calls.get("context")?.(
+      {
+        messages: [
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "boom" }],
+            toolName: "read",
+            isError: true,
+            toolCallId: "historic-error",
+          },
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "archived output" }],
+            toolName: "read",
+            isError: false,
+            toolCallId: "historic-success",
+          },
+        ],
+      },
+      ctx,
+    ) as { messages?: Array<{ content: Array<{ type: string; text?: string }> }> } | undefined;
+
+    expect(contextResult?.messages?.[0]?.content).toEqual([
+      {
+        type: "text",
+        text: `[Error output removed -- tool failed more than ${config.strategies.errorPurge.maxTurnsAgo} turns ago]`,
+      },
+    ]);
+
+    await calls.get("agent_end")?.(
+      {
+        messages: [
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "boom" }],
+            toolName: "read",
+            isError: true,
+            toolCallId: "historic-error",
+          },
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "archived output" }],
+            toolName: "read",
+            isError: false,
+            toolCallId: "historic-success",
+          },
+        ],
+      },
+      ctx,
+    );
+
+    const { loadSessionState } = await loadStateStore();
+    const persisted = loadSessionState(sessionId);
+    expect(persisted?.toolCalls).toEqual([
+      [
+        "historic-error",
+        expect.objectContaining({
+          toolName: "read",
+          isError: true,
+          turnIndex: 0,
+        }),
+      ],
+      [
+        "historic-success",
+        expect.objectContaining({
+          toolName: "read",
+          isError: false,
+          turnIndex: 0,
+        }),
+      ],
+    ]);
+    expect(persisted?.pruneTargets).toHaveLength(1);
+    expect(readIndexEntries(getIndexPath("/tmp/project"))).toHaveLength(1);
+  });
+
+  it("applies immediate safe tool_result shaping only to successful single-text results", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = false;
+    config.dashboard.enabled = false;
+    config.strategies.shortCircuit.enabled = true;
+    config.strategies.shortCircuit.minTokens = 0;
+    config.strategies.codeFilter.enabled = false;
+    config.strategies.truncation.enabled = false;
+    config.strategies.errorPurge.enabled = false;
+    config.strategies.deduplication.enabled = false;
+
+    const { calls, pi } = createPiMock();
+    createExtensionRuntime(pi, config);
+
+    const ctx = createContext("session-tool-result-shaping");
+    calls.get("tool_call")?.(
+      {
+        toolCallId: "call-shaped",
+        toolName: "read",
+        input: { path: "result.json" },
+      },
+      ctx,
+    );
+
+    const shaped = await calls.get("tool_result")?.(
+      {
+        toolCallId: "call-shaped",
+        toolName: "read",
+        isError: false,
+        content: [{ type: "text", text: "{\"status\":\"ok\",\"payload\":\"done\"}" }],
+      },
+      ctx,
+    );
+
+    const mixed = await calls.get("tool_result")?.(
+      {
+        toolCallId: "call-mixed",
+        toolName: "read",
+        isError: false,
+        content: [
+          { type: "text", text: "{\"status\":\"ok\"}" },
+          { type: "image", imageUrl: "https://example.com/image.png" },
+        ],
+      },
+      ctx,
+    );
+
+    const errored = await calls.get("tool_result")?.(
+      {
+        toolCallId: "call-error",
+        toolName: "read",
+        isError: true,
+        content: [{ type: "text", text: "{\"status\":\"ok\"}" }],
+      },
+      ctx,
+    );
+
+    expect(shaped).toEqual({
+      content: [{ type: "text", text: "[ok]" }],
+    });
+    expect(mixed).toBeUndefined();
+    expect(errored).toBeUndefined();
+
+    await calls.get("session_shutdown")?.({ type: "session_shutdown" }, ctx);
+    const { loadSessionState } = await loadStateStore();
+    const persisted = loadSessionState("session-tool-result-shaping");
+    expect(persisted?.toolCalls).toEqual([
+      [
+        "call-shaped",
+        expect.objectContaining({
+          toolCallId: "call-shaped",
+          toolName: "read",
+          isError: false,
+          tokenEstimate: expect.any(Number),
+          shapedContent: [{ type: "text", text: "[ok]" }],
+        }),
+      ],
+      [
+        "call-mixed",
+        expect.objectContaining({
+          toolCallId: "call-mixed",
+          toolName: "read",
+          isError: false,
+          shapedContent: undefined,
+        }),
+      ],
+      [
+        "call-error",
+        expect.objectContaining({
+          toolCallId: "call-error",
+          toolName: "read",
+          isError: true,
+          shapedContent: undefined,
+        }),
+      ],
+    ]);
   });
 });

@@ -84,4 +84,22 @@ describe("session state", () => {
     expect(hydrated.lastContextPercent).toBe(0.5);
     expect(hydrated.lastContextWindow).toBe(2000);
   });
+
+  it("serializes and hydrates persisted system hint state", () => {
+    const s = createSessionState("/tmp/project");
+    s.systemHintState.appliedOnce = true;
+    s.systemHintState.lastAppliedText = "Keep the context small.";
+
+    const persisted = serializeSessionState(s);
+    expect(persisted.systemHintState).toEqual({
+      appliedOnce: true,
+      lastAppliedText: "Keep the context small.",
+    });
+
+    const hydrated = hydrateSessionState(persisted);
+    expect(hydrated.systemHintState).toEqual({
+      appliedOnce: true,
+      lastAppliedText: "Keep the context small.",
+    });
+  });
 });

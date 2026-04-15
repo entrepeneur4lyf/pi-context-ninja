@@ -1,4 +1,6 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { ToolResultMessage } from "@mariozechner/pi-ai";
 import path from "node:path";
 import { createSessionState, getOrCreateToolRecord, hydrateSessionState } from "../state.js";
 import { loadSessionState, resolveSessionId, saveSessionState } from "../persistence/state-store.js";
@@ -12,10 +14,16 @@ import { startDashboardServer, type DashboardServerHandle } from "../dashboard/s
 import { buildCompactionSummary } from "../compression/index-entry.js";
 import { getIndexPath, readIndexEntries } from "../persistence/index-store.js";
 import { applyPruneTargets } from "../strategies/pruning.js";
+import {
+  estimateToolContentTokens,
+  extractExclusiveToolText,
+  isToolResultMessage,
+  replaceExclusiveToolText,
+} from "../messages.js";
+import { applySafeToolTextShaping } from "../strategies/safe-shaping.js";
 
 const sessionMap = new Map<string, SessionState>();
 const analyticsStoresBySession = new Map<string, AnalyticsStore>();
-const systemHintStateBySession = new Map<string, { lastAppliedText: string | null; appliedOnce: boolean }>();
 
 type DashboardRuntime = {
   handle: DashboardServerHandle | null;
@@ -88,21 +96,81 @@ function appendSystemHint(systemPrompt: string, hintText: string): string {
   return `${trimmedSystemPrompt}\n\n${hintText}`;
 }
 
-function getSystemHintState(sessionId: string): { lastAppliedText: string | null; appliedOnce: boolean } {
-  let state = systemHintStateBySession.get(sessionId);
-  if (!state) {
-    state = { lastAppliedText: null, appliedOnce: false };
-    systemHintStateBySession.set(sessionId, state);
-  }
-  return state;
-}
-
 function resolveContextTokens(state: SessionState, ctx: { getContextUsage(): { tokens: number | null } | undefined }): number | null {
   const usage = ctx.getContextUsage();
   if (usage?.tokens !== undefined && usage.tokens !== null) {
     return usage.tokens;
   }
   return state.lastContextTokens;
+}
+
+type ToolResultLike = Pick<ToolResultMessage, "toolCallId" | "toolName" | "content" | "isError">;
+
+function resolveHistoricalTurnIndex(state: SessionState): number {
+  const earliestTurnIndex = state.turnHistory.reduce<number>(
+    (min, snapshot) => Math.min(min, snapshot.turnIndex),
+    Number.POSITIVE_INFINITY,
+  );
+  return Number.isFinite(earliestTurnIndex) ? earliestTurnIndex : 0;
+}
+
+function syncToolRecord(
+  state: SessionState,
+  toolResult: ToolResultLike,
+  turnIndex: number,
+): ReturnType<typeof getOrCreateToolRecord> | null {
+  if (typeof toolResult.toolCallId !== "string" || typeof toolResult.toolName !== "string") {
+    return null;
+  }
+
+  const record = getOrCreateToolRecord(
+    state,
+    toolResult.toolCallId,
+    toolResult.toolName,
+    undefined,
+    Boolean(toolResult.isError),
+    turnIndex,
+  );
+
+  if (record.turnIndex < 0) {
+    record.turnIndex = turnIndex;
+  }
+  record.toolName = toolResult.toolName;
+  record.isError = record.isError || Boolean(toolResult.isError);
+  record.tokenEstimate = estimateToolContentTokens(toolResult.content);
+
+  return record;
+}
+
+function rebuildToolRecordsFromMessages(state: SessionState, messages: AgentMessage[]): void {
+  const historicalTurnIndex = resolveHistoricalTurnIndex(state);
+  for (const message of messages) {
+    if (!isToolResultMessage(message)) {
+      continue;
+    }
+    syncToolRecord(state, message, historicalTurnIndex);
+  }
+}
+
+function shapeImmediateToolResult(
+  toolResult: ToolResultLike,
+  config: PCNConfig,
+): ToolResultMessage["content"] | undefined {
+  if (toolResult.isError) {
+    return undefined;
+  }
+
+  const originalText = extractExclusiveToolText(toolResult.content);
+  if (originalText === null) {
+    return undefined;
+  }
+
+  const shapedText = applySafeToolTextShaping(originalText, config);
+  if (shapedText === null || shapedText === originalText) {
+    return undefined;
+  }
+
+  return replaceExclusiveToolText(toolResult.content, shapedText);
 }
 
 function resolveCompactionTokensBefore(
@@ -249,17 +317,21 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
   pi.on("tool_result", (event, ctx) => {
     const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId, ctx.cwd);
-    if (event.isError) {
-      const rec = state.toolCalls.get(event.toolCallId);
-      if (rec) {
-        rec.isError = true;
-      }
+    const record = syncToolRecord(state, event, state.currentTurn);
+    const shapedContent = shapeImmediateToolResult(event, config);
+    if (record) {
+      record.shapedContent = shapedContent?.map((block) => ({ ...block }));
     }
+    if (shapedContent) {
+      return { content: shapedContent };
+    }
+    return undefined;
   });
 
   pi.on("context", async (event, ctx) => {
     const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId, ctx.cwd);
+    rebuildToolRecordsFromMessages(state, event.messages);
     const materialized = materializeContext(event.messages, { state, config });
     return {
       ...materialized,
@@ -270,6 +342,12 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
   pi.on("turn_end", async (event, ctx) => {
     const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId, ctx.cwd);
+
+    if (typeof event.turnIndex === "number" && Number.isFinite(event.turnIndex)) {
+      for (const toolResult of event.toolResults) {
+        syncToolRecord(state, toolResult, event.turnIndex);
+      }
+    }
 
     if (typeof event.turnIndex === "number" && Number.isFinite(event.turnIndex)) {
       backfillObservedTurnIndices(state, event.turnIndex, event.toolResults);
@@ -334,7 +412,8 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
     }
 
     const sessionId = resolveSessionId(ctx);
-    const hintState = getSystemHintState(sessionId);
+    const state = getState(sessionId, ctx.cwd);
+    const hintState = state.systemHintState;
     const hintText = config.systemHint.text.trim();
     if (!hintText) {
       return undefined;
@@ -346,6 +425,7 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
       }
       hintState.appliedOnce = true;
       hintState.lastAppliedText = hintText;
+      persistState(sessionId);
       return {
         systemPrompt: appendSystemHint(event.systemPrompt, hintText),
       };
@@ -356,6 +436,7 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
     }
 
     hintState.lastAppliedText = hintText;
+    persistState(sessionId);
     return {
       systemPrompt: appendSystemHint(event.systemPrompt, hintText),
     };
@@ -372,6 +453,7 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
   pi.on("agent_end", (event, ctx) => {
     const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId, ctx.cwd);
+    rebuildToolRecordsFromMessages(state, event.messages);
     refreshRangeIndex(event.messages, state, config, ctx.cwd);
     persistState(sessionId);
   });
@@ -383,7 +465,6 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
       saveSessionState(sessionId, state);
       sessionMap.delete(sessionId);
     }
-    systemHintStateBySession.delete(sessionId);
     await releaseSessionResources(sessionId);
   });
 }

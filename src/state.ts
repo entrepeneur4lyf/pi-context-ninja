@@ -1,6 +1,7 @@
 import type {
   PersistedSessionState,
   SessionState,
+  SystemHintState,
   ToolRecord,
 } from "./types.js";
 
@@ -21,6 +22,7 @@ export function createSessionState(projectPath: string): SessionState {
     lastContextTokens: null,
     lastContextPercent: null,
     lastContextWindow: null,
+    systemHintState: createSystemHintState(),
   };
 }
 
@@ -90,6 +92,7 @@ export function serializeSessionState(state: SessionState): PersistedSessionStat
     lastContextTokens: state.lastContextTokens,
     lastContextPercent: state.lastContextPercent,
     lastContextWindow: state.lastContextWindow,
+    systemHintState: { ...state.systemHintState },
   };
 }
 
@@ -113,6 +116,7 @@ export function hydrateSessionState(persisted: PersistedSessionState): SessionSt
     lastContextTokens: persisted.lastContextTokens,
     lastContextPercent: persisted.lastContextPercent,
     lastContextWindow: persisted.lastContextWindow,
+    systemHintState: { ...persisted.systemHintState },
   };
 }
 
@@ -141,6 +145,7 @@ export function normalizePersistedSessionState(input: unknown): PersistedSession
     lastContextTokens: normalizeNullableNumber(input.lastContextTokens),
     lastContextPercent: normalizeNullableNumber(input.lastContextPercent),
     lastContextWindow: normalizeNullableNumber(input.lastContextWindow),
+    systemHintState: normalizeSystemHintState(input.systemHintState),
   };
 }
 
@@ -274,8 +279,26 @@ function normalizeToolRecord(value: Record<string, unknown>): ToolRecord {
   };
 }
 
+function normalizeSystemHintState(value: unknown): SystemHintState {
+  if (!isRecord(value)) {
+    return createSystemHintState();
+  }
+
+  return {
+    appliedOnce: typeof value.appliedOnce === "boolean" ? value.appliedOnce : false,
+    lastAppliedText: typeof value.lastAppliedText === "string" ? value.lastAppliedText : null,
+  };
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function createSystemHintState(): SystemHintState {
+  return {
+    lastAppliedText: null,
+    appliedOnce: false,
+  };
 }
 
 function getSortedKeysReplacer(): (key: string, value: unknown) => unknown {

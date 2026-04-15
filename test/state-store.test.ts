@@ -53,6 +53,8 @@ describe("state store", () => {
       timestamp: 123,
       tokenEstimate: 42,
     });
+    s.systemHintState.appliedOnce = true;
+    s.systemHintState.lastAppliedText = "Keep the context small.";
     s.countedSavingsIds.add("call-1:dedup");
     s.prunedToolIds.add("call-2");
     s.turnHistory.push({
@@ -95,6 +97,10 @@ describe("state store", () => {
     ]);
     expect(loaded?.countedSavingsIds).toEqual(["call-1:dedup"]);
     expect(loaded?.turnHistory[0]).toMatchObject({ messageCountAfterTurn: 9 });
+    expect(loaded?.systemHintState).toEqual({
+      appliedOnce: true,
+      lastAppliedText: "Keep the context small.",
+    });
   });
 
   it("returns null when the state file is missing", async () => {
@@ -161,6 +167,10 @@ describe("state store", () => {
         },
       ],
       projectPath: "/tmp/project",
+      systemHintState: {
+        appliedOnce: true,
+        lastAppliedText: "Keep the context small.",
+      },
     };
 
     fs.writeFileSync(statePath, JSON.stringify(legacy, null, 2), "utf8");
@@ -187,5 +197,9 @@ describe("state store", () => {
     expect(loaded?.lastContextTokens).toBeNull();
     expect(loaded?.lastContextPercent).toBeNull();
     expect(loaded?.lastContextWindow).toBeNull();
+    expect(loaded?.systemHintState).toEqual({
+      appliedOnce: true,
+      lastAppliedText: "Keep the context small.",
+    });
   });
 });

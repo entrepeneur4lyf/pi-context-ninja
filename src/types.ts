@@ -1,5 +1,10 @@
 import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
 
+export interface SystemHintState {
+  lastAppliedText: string | null;
+  appliedOnce: boolean;
+}
+
 export interface ToolRecord {
   toolCallId: string;
   toolName: string;
@@ -47,6 +52,7 @@ export interface PersistedSessionState {
   lastContextTokens: number | null;
   lastContextPercent: number | null;
   lastContextWindow: number | null;
+  systemHintState: SystemHintState;
 }
 
 export type StrategyName =
@@ -73,6 +79,7 @@ export interface SessionState {
   lastContextTokens: number | null;
   lastContextPercent: number | null;
   lastContextWindow: number | null;
+  systemHintState: SystemHintState;
 }
 
 export interface StrategyResult {

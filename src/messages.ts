@@ -2,6 +2,7 @@ import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { TextContent, ToolResultMessage } from "@mariozechner/pi-ai";
 
 type ToolResultBlock = ToolResultMessage["content"][number];
+type ToolResultContent = ToolResultMessage["content"];
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -13,6 +14,10 @@ function isTextContent(block: unknown): block is TextContent {
 
 function countTextBlocks(content: ToolResultBlock[]): number {
   return content.reduce((count, block) => count + (isTextContent(block) ? 1 : 0), 0);
+}
+
+function estimateTokens(text: string): number {
+  return Math.max(1, Math.ceil(text.length / 4));
 }
 
 /**
@@ -79,6 +84,46 @@ export function replaceToolContentWithText(msg: ToolResultMessage, newText: stri
     ...msg,
     content: [{ type: "text", text: newText }],
   };
+}
+
+/**
+ * Extracts text only when the tool result content is a single text block.
+ * Mixed-content results return null to avoid destructive rewrites.
+ */
+export function extractExclusiveToolText(content: ToolResultContent | undefined): string | null {
+  if (!content || content.length !== 1) {
+    return null;
+  }
+
+  return isTextContent(content[0]) ? content[0].text : null;
+}
+
+/**
+ * Builds a replacement content array for single-text tool results.
+ * Mixed-content results return undefined to signal "leave unchanged".
+ */
+export function replaceExclusiveToolText(
+  content: ToolResultContent | undefined,
+  newText: string,
+): ToolResultContent | undefined {
+  return extractExclusiveToolText(content) === null ? undefined : [{ type: "text", text: newText }];
+}
+
+/**
+ * Estimates tool-result tokens from visible text blocks only.
+ */
+export function estimateToolContentTokens(content: ToolResultContent | undefined): number {
+  if (!content) {
+    return 0;
+  }
+
+  let total = 0;
+  for (const block of content) {
+    if (isTextContent(block)) {
+      total += estimateTokens(block.text);
+    }
+  }
+  return total;
 }
 
 /**
