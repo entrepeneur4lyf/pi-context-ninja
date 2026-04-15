@@ -1,58 +1,98 @@
-import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { ImageContent, TextContent, ToolResultMessage } from "@mariozechner/pi-ai";
+
+type ToolResultBlock = ToolResultMessage["content"][number];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function isTextContent(block: unknown): block is TextContent {
+  return isRecord(block) && block.type === "text" && typeof block.text === "string";
+}
 
 /**
- * Extracts text content from an AgentMessage.
- * Handles TextContent[], raw string content, or empty/missing content.
+ * Checks whether a message is a Pi tool result message.
+ */
+export function isToolResultMessage(msg: AgentMessage): msg is ToolResultMessage {
+  return isRecord(msg) && msg.role === "toolResult";
+}
+
+/**
+ * Extracts text content from a tool result message.
+ * Custom agent messages and non-tool messages are treated as opaque.
  */
 export function extractTextContent(msg: AgentMessage): string {
-  const content = msg.content as unknown;
-  if (!content) return "";
-  if (typeof content === "string") return content;
-  if (Array.isArray(content)) {
-    return content
-      .map((c: unknown) => {
-        if (c && typeof c === "object" && "type" in c && (c as TextContent).type === "text") {
-          return (c as TextContent).text ?? "";
-        }
-        return "";
-      })
-      .filter(Boolean)
-      .join("\n");
+  if (!isToolResultMessage(msg)) {
+    return "";
   }
-  return "";
+
+  return msg.content.filter(isTextContent).map((block) => block.text).join("\n");
 }
 
 /**
- * Checks if a message has role "toolResult".
- */
-export function isToolResultMessage(msg: AgentMessage): boolean {
-  return msg.role === "toolResult";
-}
-
-/**
- * Returns the tool name from a message, or empty string if not present.
+ * Returns the tool name from a tool result message, or empty string if not present.
  */
 export function getToolName(msg: AgentMessage): string {
-  return (msg as any).toolName ?? "";
+  return isToolResultMessage(msg) && typeof msg.toolName === "string" ? msg.toolName : "";
 }
 
 /**
  * Returns whether a tool result message represents an error.
  */
 export function isError(msg: AgentMessage): boolean {
-  return (msg as any).isError ?? false;
+  return isToolResultMessage(msg) && typeof msg.isError === "boolean" ? msg.isError : false;
+}
+
+function replaceToolTextBlocks(content: ToolResultBlock[], newText: string): ToolResultBlock[] {
+  let replaced = false;
+
+  const next: ToolResultBlock[] = [];
+  for (const block of content) {
+    if (!isTextContent(block)) {
+      next.push(block);
+      continue;
+    }
+
+    if (replaced) {
+      continue;
+    }
+
+    replaced = true;
+    next.push({ type: "text", text: newText });
+  }
+
+  return replaced ? next : content;
 }
 
 /**
- * Shallow-clone the message and replace its content with new content.
- * If newContent is a string, it is wrapped in a TextContent array.
+ * Replaces the text content inside a tool result while preserving non-text blocks.
+ */
+export function replaceToolTextContent(msg: ToolResultMessage, newText: string): ToolResultMessage {
+  return {
+    ...msg,
+    content: replaceToolTextBlocks(msg.content, newText),
+  };
+}
+
+/**
+ * Compatibility helper for older callers.
+ * String replacements preserve non-text blocks; explicit arrays are passed through.
  */
 export function replaceToolContent(
   msg: AgentMessage,
-  newContent: string | (TextContent | ImageContent)[],
+  newContent: string | ToolResultMessage["content"],
 ): AgentMessage {
-  const resolvedContent: (TextContent | ImageContent)[] =
-    typeof newContent === "string" ? [{ type: "text", text: newContent }] : newContent;
-  return { ...msg, content: resolvedContent };
+  if (!isToolResultMessage(msg)) {
+    return msg;
+  }
+
+  if (typeof newContent === "string") {
+    return replaceToolTextContent(msg, newContent);
+  }
+
+  return {
+    ...msg,
+    content: newContent,
+  };
 }

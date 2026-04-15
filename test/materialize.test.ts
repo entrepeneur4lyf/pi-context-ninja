@@ -56,4 +56,40 @@ describe("materialize", () => {
     expect(result.messages?.length).toBe(1);
     expect((result.messages as any)[0].content[0].text).toBe('{"status":"ok"}');
   });
+
+  it("preserves image blocks when rewriting tool results", () => {
+    const state = createSessionState("/tmp");
+    state.currentTurn = 2;
+    state.toolCalls.set("t1", {
+      toolCallId: "t1",
+      toolName: "bash",
+      inputArgs: {},
+      inputFingerprint: "bash::{}",
+      isError: false,
+      turnIndex: 1,
+      timestamp: Date.now(),
+      tokenEstimate: 10,
+    });
+
+    const msgs = [
+      {
+        role: "toolResult",
+        content: [
+          { type: "text", text: '{"status":"ok"}' },
+          { type: "image", data: "img-data", mimeType: "image/png" },
+        ],
+        toolName: "bash",
+        isError: false,
+        toolCallId: "t1",
+        _key: "t1",
+      },
+    ] as any;
+
+    const result = materializeContext(msgs, { state, config: defaultConfig() });
+    const toolMsg = result.messages?.[0] as any;
+
+    expect(toolMsg.content).toHaveLength(2);
+    expect(toolMsg.content[0]).toMatchObject({ type: "text", text: "[ok]" });
+    expect(toolMsg.content[1]).toMatchObject({ type: "image", data: "img-data", mimeType: "image/png" });
+  });
 });
