@@ -11,11 +11,15 @@ export interface DashboardServerHandle {
   server: Server;
   ready: Promise<void>;
   publish(sessionId: string, snapshot: AnalyticsSnapshot): void;
+  clearSession(sessionId: string): void;
   close(): Promise<void>;
   snapshot(sessionId?: string): AnalyticsSnapshot | null;
 }
 
-type SseClient = ServerResponse;
+interface SseClient {
+  res: ServerResponse;
+  sessionId: string | null;
+}
 
 function writeSse(res: ServerResponse, type: string, data: unknown): void {
   res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
@@ -56,6 +60,40 @@ export function startDashboardServer(
     return snapshotsBySession.get(activeSessionId) ?? null;
   }
 
+  function getLastSessionId(): string | null {
+    let lastSessionId: string | null = null;
+    for (const sessionId of snapshotsBySession.keys()) {
+      lastSessionId = sessionId;
+    }
+    return lastSessionId;
+  }
+
+  function broadcastSnapshot(snapshot: AnalyticsSnapshot | null): void {
+    for (const client of clients) {
+      if (client.sessionId !== null) {
+        continue;
+      }
+      try {
+        writeSse(client.res, "snapshot", snapshot);
+      } catch {
+        clients.delete(client);
+      }
+    }
+  }
+
+  function broadcastSessionSnapshot(sessionId: string, snapshot: AnalyticsSnapshot | null): void {
+    for (const client of clients) {
+      if (client.sessionId !== sessionId) {
+        continue;
+      }
+      try {
+        writeSse(client.res, "snapshot", snapshot);
+      } catch {
+        clients.delete(client);
+      }
+    }
+  }
+
   const server = http.createServer((req: IncomingMessage, res: ServerResponse) => {
     const requestUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? `${options.host}:${options.port}`}`);
 
@@ -72,6 +110,7 @@ export function startDashboardServer(
     }
 
     if (requestUrl.pathname === "/events") {
+      const sessionId = requestUrl.searchParams.get("sessionId");
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -79,12 +118,13 @@ export function startDashboardServer(
       });
       res.write("retry: 1000\n");
       writeSse(res, "connected", {});
-      const snapshot = getSnapshot(requestUrl.searchParams.get("sessionId") ?? undefined);
+      const snapshot = getSnapshot(sessionId ?? undefined);
       if (snapshot) {
         writeSse(res, "snapshot", snapshot);
       }
-      clients.add(res);
-      req.on("close", () => clients.delete(res));
+      const client: SseClient = { res, sessionId };
+      clients.add(client);
+      req.on("close", () => clients.delete(client));
       return;
     }
 
@@ -115,13 +155,22 @@ export function startDashboardServer(
     ready,
     publish(sessionId: string, snapshot: AnalyticsSnapshot): void {
       activeSessionId = sessionId;
+      snapshotsBySession.delete(sessionId);
       snapshotsBySession.set(sessionId, snapshot);
-      for (const client of clients) {
-        try {
-          writeSse(client, "snapshot", snapshot);
-        } catch {
-          clients.delete(client);
-        }
+      broadcastSnapshot(snapshot);
+      broadcastSessionSnapshot(sessionId, snapshot);
+    },
+    clearSession(sessionId: string): void {
+      const removedSnapshot = snapshotsBySession.get(sessionId) ?? null;
+      snapshotsBySession.delete(sessionId);
+
+      if (activeSessionId === sessionId) {
+        activeSessionId = getLastSessionId();
+        broadcastSnapshot(getSnapshot());
+      }
+
+      if (removedSnapshot) {
+        broadcastSessionSnapshot(sessionId, null);
       }
     },
     snapshot(sessionId?: string): AnalyticsSnapshot | null {
@@ -130,7 +179,7 @@ export function startDashboardServer(
     close(): Promise<void> {
       for (const client of clients) {
         try {
-          client.end();
+          client.res.end();
         } catch {
           // Ignore shutdown races from disconnected clients.
         }

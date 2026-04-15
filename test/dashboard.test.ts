@@ -23,6 +23,19 @@ afterEach(() => {
   tmpDir = "";
 });
 
+async function readSseChunk(reader: ReadableStreamDefaultReader<Uint8Array>, timeoutMs = 100): Promise<string | null> {
+  const result = await Promise.race([
+    reader.read(),
+    new Promise<null>((resolve) => setTimeout(() => resolve(null), timeoutMs)),
+  ]);
+
+  if (result === null) {
+    return null;
+  }
+
+  return new TextDecoder().decode(result.value);
+}
+
 describe("dashboard server", () => {
   it("serves the dashboard page, broadcasts snapshots, and closes cleanly", async () => {
     const server = startDashboardServer({ port: 0, host: "127.0.0.1" });
@@ -160,8 +173,80 @@ describe("dashboard server", () => {
     expect(snapshot.context.tokens).toBe(300);
     expect(snapshot.totals.tokensKeptOutApprox).toBe(0);
 
-    await expect(callsA.get("session_shutdown")?.({}, ctxA)).resolves.toBeUndefined();
     await expect(callsB.get("session_shutdown")?.({}, ctxB)).resolves.toBeUndefined();
+
+    const fallbackSnapshot = await fetch(`http://127.0.0.1:${port}/snapshot`).then((res) => res.json());
+    expect(fallbackSnapshot.sessionId).toBe("session-a");
+    expect(fallbackSnapshot.totalTurns).toBe(1);
+    expect(fallbackSnapshot.context.tokens).toBe(420);
+
+    await expect(callsA.get("session_shutdown")?.({}, ctxA)).resolves.toBeUndefined();
+  });
+
+  it("only delivers SSE snapshots to clients subscribed to that session", async () => {
+    const server = startDashboardServer({ port: 0, host: "127.0.0.1" });
+    await once(server.server, "listening");
+
+    try {
+      const address = server.server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("expected a bound TCP address");
+      }
+
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      const response = await fetch(`${baseUrl}/events?sessionId=session-a`);
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("expected SSE response body");
+      }
+
+      expect(await readSseChunk(reader)).toContain('"type":"connected"');
+
+      server.publish("session-a", {
+        generatedAt: 1713081600000,
+        sessionId: "session-a",
+        projectPath: "/tmp/project-a",
+        totalTurns: 1,
+        totals: {
+          tokensSavedApprox: 10,
+          tokensKeptOutApprox: 20,
+        },
+        context: {
+          tokens: 100,
+          percent: 0.1,
+          window: 1000,
+        },
+        latestTurn: null,
+        recentTurns: [],
+      });
+
+      const sessionAChunk = await readSseChunk(reader);
+      expect(sessionAChunk).toContain('"type":"snapshot"');
+      expect(sessionAChunk).toContain('"sessionId":"session-a"');
+
+      server.publish("session-b", {
+        generatedAt: 1713081600001,
+        sessionId: "session-b",
+        projectPath: "/tmp/project-b",
+        totalTurns: 1,
+        totals: {
+          tokensSavedApprox: 30,
+          tokensKeptOutApprox: 40,
+        },
+        context: {
+          tokens: 300,
+          percent: 0.3,
+          window: 1000,
+        },
+        latestTurn: null,
+        recentTurns: [],
+      });
+
+      expect(await readSseChunk(reader)).toBeNull();
+      await reader.cancel();
+    } finally {
+      await server.close();
+    }
   });
 });
 

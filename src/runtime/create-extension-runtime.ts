@@ -178,6 +178,10 @@ async function releaseSessionResources(sessionId: string): Promise<void> {
     analyticsStoresBySession.delete(sessionId);
   }
 
+  if (dashboardRuntime.handle) {
+    dashboardRuntime.handle.clearSession(sessionId);
+  }
+
   dashboardRuntime.activeSessions.delete(sessionId);
   if (dashboardRuntime.activeSessions.size === 0 && dashboardRuntime.handle) {
     const handle = dashboardRuntime.handle;
