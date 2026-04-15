@@ -6,7 +6,7 @@ import path from "node:path";
 import registerExtension from "../src/index.js";
 import { defaultConfig } from "../src/config.js";
 import { createExtensionRuntime } from "../src/runtime/create-extension-runtime.js";
-import { appendIndexEntry, getIndexPath } from "../src/persistence/index-store.js";
+import { appendIndexEntry, getIndexPath, readIndexEntries } from "../src/persistence/index-store.js";
 import { buildIndexEntry, formatTOC } from "../src/compression/index-entry.js";
 
 let stateDir = "";
@@ -260,6 +260,44 @@ describe("runtime hook registration", () => {
     expect(contextResult.messages?.[1]?.role).toBe("assistant");
     expect(contextResult.messages?.[2]?.role).toBe("toolResult");
     expect(contextResult.messages?.[2]?.content[0]?.text).toContain("[pruned:");
+  });
+
+  it("does not create new broad pruning when no tool results are available", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = false;
+    config.dashboard.enabled = false;
+    config.backgroundIndexing.enabled = true;
+    config.backgroundIndexing.minRangeTurns = 1;
+
+    const { calls, pi } = createPiMock();
+    createExtensionRuntime(pi, config);
+
+    const ctx = createContext("session-no-tool-results");
+
+    await calls.get("turn_end")?.(
+      {
+        turnIndex: 3,
+        message: { role: "assistant", content: "done" },
+        toolResults: [],
+      },
+      ctx,
+    );
+
+    await calls.get("agent_end")?.(
+      {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "show me the file" }] },
+          { role: "assistant", content: "running read" },
+        ],
+      },
+      ctx,
+    );
+
+    const { loadSessionState } = await loadStateStore();
+    const persisted = loadSessionState("session-no-tool-results");
+    expect(persisted?.pruneTargets).toEqual([]);
+    expect(persisted?.omitRanges).toEqual([]);
+    expect(readIndexEntries(getIndexPath("/tmp/project"))).toEqual([]);
   });
 
   it("returns a native compaction result from the indexed TOC when enabled", async () => {

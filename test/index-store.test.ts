@@ -49,7 +49,7 @@ describe("index-store", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  it("refreshes a stale transcript slice into a project-scoped index entry and omit range", () => {
+  it("does not create broad omit ranges when no tool results are present", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-index-manager-"));
     process.env.PCN_INDEX_DIR = tmpDir;
 
@@ -101,18 +101,11 @@ describe("index-store", () => {
 
     refreshRangeIndex(messages, state, config, "/workspace/project-a");
 
-    expect(state.omitRanges).toHaveLength(1);
-    expect(state.omitRanges[0]).toMatchObject({
-      startTurn: 0,
-      endTurn: 3,
-      startOffset: 0,
-      endOffset: 11,
-      messageCount: 12,
-    });
+    expect(state.omitRanges).toHaveLength(0);
+    expect(state.pruneTargets).toHaveLength(0);
 
     const entries = readIndexEntries(getIndexPath("/workspace/project-a"));
-    expect(entries).toHaveLength(1);
-    expect(entries[0]?.turnRange).toBe("0-3");
+    expect(entries).toHaveLength(0);
     expect(readIndexEntries(getIndexPath("session-1"))).toEqual([]);
 
     fs.rmSync(tmpDir, { recursive: true, force: true });

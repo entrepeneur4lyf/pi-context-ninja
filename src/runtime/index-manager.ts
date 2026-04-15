@@ -36,35 +36,13 @@ export function refreshRangeIndex(
     return record !== undefined && record.turnIndex >= stale.startTurn && record.turnIndex <= stale.endTurn;
   });
 
+  if (toolResults.length === 0) {
+    return [];
+  }
+
   const indexedAt = Date.now();
   const summaryRef = `${stale.startTurn}-${stale.endTurn}`;
   const offsets = resolveTurnOffsets(state, stale.startTurn, stale.endTurn);
-
-  if (toolResults.length === 0) {
-    if (!offsets) {
-      return [];
-    }
-
-    const slice = messages.slice(offsets.startOffset, offsets.endOffset + 1);
-    if (slice.length === 0) {
-      return [];
-    }
-
-    const entry = buildIndexEntry(stale.startTurn, stale.endTurn, extractTopicFromRange(slice), slice.length);
-    appendIndexEntry(getIndexPath(projectPath || "default"), entry);
-
-    state.omitRanges.push({
-      startTurn: stale.startTurn,
-      endTurn: stale.endTurn,
-      startOffset: offsets.startOffset,
-      endOffset: offsets.endOffset,
-      indexedAt,
-      summaryRef,
-      messageCount: slice.length,
-    });
-
-    return [];
-  }
 
   const pruneTargets: PruneTarget[] = toolResults.map((message) => {
     const record = state.toolCalls.get(message.toolCallId);
