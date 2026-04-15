@@ -33,7 +33,6 @@ strategies:
     headLines: 100
     tailLines: 50
     minLines: 300
-    strategy: "head_tail"  # or "smart"
 
   deduplication:
     enabled: true
@@ -45,14 +44,11 @@ strategies:
   errorPurge:
     enabled: true
     maxTurnsAgo: 3
-    patterns: []
 
 # Background index of file ranges for prune hints
 backgroundIndexing:
   enabled: true
   minRangeTurns: 8
-  maxFiles: 50
-  debounceMs: 2000
 
 # Token savings analytics stored in SQLite
 analytics:

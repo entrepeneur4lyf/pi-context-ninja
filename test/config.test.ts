@@ -17,6 +17,20 @@ describe("config", () => {
     expect(config.strategies.codeFilter.maxBodyLines).toBe(200);
     expect(config.strategies.codeFilter.keepImports).toBe(true);
     expect(config.strategies.deduplication.maxOccurrences).toBe(2);
+    expect(config.strategies.truncation).toEqual({
+      enabled: true,
+      headLines: 100,
+      tailLines: 50,
+      minLines: 300,
+    });
+    expect(config.strategies.errorPurge).toEqual({
+      enabled: true,
+      maxTurnsAgo: 3,
+    });
+    expect(config.backgroundIndexing).toEqual({
+      enabled: true,
+      minRangeTurns: 8,
+    });
   });
 
   it("loads and overrides from YAML", () => {
@@ -73,5 +87,53 @@ describe("config", () => {
     expect(d.dashboard).toBeDefined();
     expect(d.systemHint).toBeDefined();
     expect(d.nativeCompactionIntegration).toBeDefined();
+  });
+
+  it("ignores deprecated and unknown YAML keys outside the supported contract", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-"));
+    const cfgPath = path.join(tmpDir, "config.yaml");
+    try {
+      fs.writeFileSync(
+        cfgPath,
+        [
+          "strategies:",
+          "  truncation:",
+          "    minLines: 111",
+          "    strategy: smart",
+          "  errorPurge:",
+          "    maxTurnsAgo: 9",
+          "    patterns:",
+          "      - timeout",
+          "backgroundIndexing:",
+          "  minRangeTurns: 4",
+          "  maxFiles: 10",
+          "  debounceMs: 250",
+          "unsupportedTopLevel: true",
+        ].join("\n"),
+      );
+
+      const config = loadConfig(cfgPath);
+      expect(config.strategies.truncation).toEqual({
+        enabled: true,
+        headLines: 100,
+        tailLines: 50,
+        minLines: 111,
+      });
+      expect("strategy" in config.strategies.truncation).toBe(false);
+      expect(config.strategies.errorPurge).toEqual({
+        enabled: true,
+        maxTurnsAgo: 9,
+      });
+      expect("patterns" in config.strategies.errorPurge).toBe(false);
+      expect(config.backgroundIndexing).toEqual({
+        enabled: true,
+        minRangeTurns: 4,
+      });
+      expect("maxFiles" in config.backgroundIndexing).toBe(false);
+      expect("debounceMs" in config.backgroundIndexing).toBe(false);
+      expect("unsupportedTopLevel" in (config as object)).toBe(false);
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
   });
 });

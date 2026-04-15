@@ -20,7 +20,6 @@ export interface TruncationConfig {
   headLines: number;
   tailLines: number;
   minLines: number;
-  strategy: "head_tail" | "smart";
 }
 
 export interface DeduplicationConfig {
@@ -32,14 +31,11 @@ export interface DeduplicationConfig {
 export interface ErrorPurgeConfig {
   enabled: boolean;
   maxTurnsAgo: number;
-  patterns: string[];
 }
 
 export interface BackgroundIndexingConfig {
   enabled: boolean;
   minRangeTurns: number;
-  maxFiles: number;
-  debounceMs: number;
 }
 
 export interface AnalyticsConfig {
@@ -101,7 +97,6 @@ export function defaultConfig(): PCNConfig {
         headLines: 100,
         tailLines: 50,
         minLines: 300,
-        strategy: "head_tail",
       },
       deduplication: {
         enabled: true,
@@ -111,14 +106,11 @@ export function defaultConfig(): PCNConfig {
       errorPurge: {
         enabled: true,
         maxTurnsAgo: 3,
-        patterns: [],
       },
     },
     backgroundIndexing: {
       enabled: true,
       minRangeTurns: 8,
-      maxFiles: 50,
-      debounceMs: 2000,
     },
     analytics: {
       enabled: true,
@@ -153,7 +145,10 @@ function asPlainObject<T extends object>(value: T): T & PlainObject {
 
 function deepMerge<T extends PlainObject>(target: T, source: PlainObject): T {
   const result: PlainObject = { ...target };
-  for (const key of Object.keys(source)) {
+  for (const key of Object.keys(target)) {
+    if (!(key in source)) {
+      continue;
+    }
     const sourceValue = source[key];
     const targetValue = target[key];
     if (isPlainObject(sourceValue) && isPlainObject(targetValue)) {
