@@ -24,9 +24,29 @@ export interface OmitRange {
 export interface TurnSnapshot {
   turnIndex: number;
   toolCount: number;
+  messageCountAfterTurn: number;
   tokensKeptOutDelta: number;
   tokensSavedDelta: number;
   timestamp: number;
+}
+
+export type PersistedToolCall = [string, ToolRecord];
+
+export interface PersistedSessionState {
+  toolCalls: PersistedToolCall[];
+  prunedToolIds: string[];
+  omitRanges: OmitRange[];
+  tokensKeptOutTotal: number;
+  tokensSaved: number;
+  tokensKeptOutByType: Record<string, number>;
+  tokensSavedByType: Record<string, number>;
+  currentTurn: number;
+  countedSavingsIds: string[];
+  turnHistory: TurnSnapshot[];
+  projectPath: string;
+  lastContextTokens: number | null;
+  lastContextPercent: number | null;
+  lastContextWindow: number | null;
 }
 
 export type StrategyName =

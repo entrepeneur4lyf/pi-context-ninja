@@ -35,6 +35,26 @@ describe("state store", () => {
     const s = createSessionState("/tmp");
     s.currentTurn = 5;
     s.tokensKeptOutTotal = 1000;
+    s.toolCalls.set("call-1", {
+      toolCallId: "call-1",
+      toolName: "read",
+      inputArgs: { path: "a.ts" },
+      inputFingerprint: "{\"path\":\"a.ts\"}",
+      isError: false,
+      turnIndex: 4,
+      timestamp: 123,
+      tokenEstimate: 42,
+    });
+    s.countedSavingsIds.add("call-1:dedup");
+    s.prunedToolIds.add("call-2");
+    s.turnHistory.push({
+      turnIndex: 5,
+      toolCount: 1,
+      messageCountAfterTurn: 9,
+      tokensKeptOutDelta: 500,
+      tokensSavedDelta: 500,
+      timestamp: 456,
+    });
 
     saveSessionState("s1", s);
     const loaded = loadSessionState("s1");
@@ -42,6 +62,18 @@ describe("state store", () => {
     expect(loaded).not.toBeNull();
     expect(loaded?.currentTurn).toBe(5);
     expect(loaded?.tokensKeptOutTotal).toBe(1000);
+    expect(loaded?.toolCalls).toEqual([
+      [
+        "call-1",
+        expect.objectContaining({
+          toolCallId: "call-1",
+          toolName: "read",
+        }),
+      ],
+    ]);
+    expect(loaded?.prunedToolIds).toEqual(["call-2"]);
+    expect(loaded?.countedSavingsIds).toEqual(["call-1:dedup"]);
+    expect(loaded?.turnHistory[0]).toMatchObject({ messageCountAfterTurn: 9 });
   });
 
   it("returns null when the state file is missing", async () => {

@@ -1,61 +1,30 @@
-import type { SessionState, OmitRange } from "../types.js";
+import type { ExtensionContext } from "@mariozechner/pi-coding-agent";
+import type { PersistedSessionState, SessionState } from "../types.js";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
+import { serializeSessionState } from "../state.js";
 
-export const STATE_DIR = path.resolve(process.env.PCN_STATE_DIR ?? path.join(os.homedir(), ".pi-ninja", "state"));
-
-export interface PersistedState {
-  omitRanges: OmitRange[];
-  currentTurn: number;
-  tokensKeptOutTotal: number;
-  tokensSaved: number;
-  tokensKeptOutByType: Record<string, number>;
-  tokensSavedByType: Record<string, number>;
-  turnHistory: SessionState["turnHistory"];
-  projectPath: string;
+export function getStateDir(): string {
+  return path.resolve(process.env.PCN_STATE_DIR ?? path.join(os.homedir(), ".pi-ninja", "state"));
 }
 
-interface SessionEntryLike {
-  id?: string;
-  path?: string;
-}
-
-interface SessionManagerLike {
-  getCurrentEntry?: () => SessionEntryLike | null | undefined;
-}
-
-interface ExtensionContextLike {
-  sessionManager?: SessionManagerLike;
-}
-
-export function resolveSessionId(ctx: ExtensionContextLike): string {
-  const sessionManager = ctx.sessionManager;
-  const entry = sessionManager?.getCurrentEntry?.();
-  return entry?.id ?? entry?.path ?? "default";
+export function resolveSessionId(ctx: Pick<ExtensionContext, "sessionManager">): string {
+  return ctx.sessionManager.getSessionId?.() ?? ctx.sessionManager.getSessionFile?.() ?? "default";
 }
 
 export function getStatePath(sessionId: string): string {
-  return path.join(STATE_DIR, `${encodeURIComponent(sessionId)}.json`);
+  return path.join(getStateDir(), `${encodeURIComponent(sessionId)}.json`);
 }
 
 export function ensureStateDir(): void {
-  fs.mkdirSync(STATE_DIR, { recursive: true });
+  fs.mkdirSync(getStateDir(), { recursive: true });
 }
 
 export function saveSessionState(sessionId: string, state: SessionState): void {
   ensureStateDir();
 
-  const persisted: PersistedState = {
-    omitRanges: state.omitRanges,
-    currentTurn: state.currentTurn,
-    tokensKeptOutTotal: state.tokensKeptOutTotal,
-    tokensSaved: state.tokensSaved,
-    tokensKeptOutByType: state.tokensKeptOutByType,
-    tokensSavedByType: state.tokensSavedByType,
-    turnHistory: state.turnHistory,
-    projectPath: state.projectPath,
-  };
+  const persisted: PersistedSessionState = serializeSessionState(state);
 
   const statePath = getStatePath(sessionId);
   const tmpPath = `${statePath}.${process.pid}.${Date.now()}.tmp`;
@@ -72,12 +41,12 @@ export function saveSessionState(sessionId: string, state: SessionState): void {
   }
 }
 
-export function loadSessionState(sessionId: string): PersistedState | null {
+export function loadSessionState(sessionId: string): PersistedSessionState | null {
   const statePath = getStatePath(sessionId);
 
   try {
     const raw = fs.readFileSync(statePath, "utf8");
-    return JSON.parse(raw) as PersistedState;
+    return JSON.parse(raw) as PersistedSessionState;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return null;

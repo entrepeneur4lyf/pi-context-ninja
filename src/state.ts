@@ -1,4 +1,8 @@
-import type { SessionState, ToolRecord } from "./types.js";
+import type {
+  PersistedSessionState,
+  SessionState,
+  ToolRecord,
+} from "./types.js";
 
 export function createSessionState(projectPath: string): SessionState {
   return {
@@ -64,9 +68,67 @@ export function creditSavings(
   return true;
 }
 
+export function serializeSessionState(state: SessionState): PersistedSessionState {
+  return {
+    toolCalls: [...state.toolCalls.entries()].map(([toolCallId, record]) => [
+      toolCallId,
+      serializeToolRecord(record),
+    ]),
+    prunedToolIds: [...state.prunedToolIds],
+    omitRanges: state.omitRanges.map((range) => ({ ...range })),
+    tokensKeptOutTotal: state.tokensKeptOutTotal,
+    tokensSaved: state.tokensSaved,
+    tokensKeptOutByType: { ...state.tokensKeptOutByType },
+    tokensSavedByType: { ...state.tokensSavedByType },
+    currentTurn: state.currentTurn,
+    countedSavingsIds: [...state.countedSavingsIds],
+    turnHistory: state.turnHistory.map((snapshot) => ({ ...snapshot })),
+    projectPath: state.projectPath,
+    lastContextTokens: state.lastContextTokens,
+    lastContextPercent: state.lastContextPercent,
+    lastContextWindow: state.lastContextWindow,
+  };
+}
+
+export function hydrateSessionState(persisted: PersistedSessionState): SessionState {
+  return {
+    toolCalls: new Map(persisted.toolCalls.map(([toolCallId, record]) => [
+      toolCallId,
+      hydrateToolRecord(record),
+    ])),
+    prunedToolIds: new Set(persisted.prunedToolIds),
+    omitRanges: persisted.omitRanges.map((range) => ({ ...range })),
+    tokensKeptOutTotal: persisted.tokensKeptOutTotal,
+    tokensSaved: persisted.tokensSaved,
+    tokensKeptOutByType: { ...persisted.tokensKeptOutByType },
+    tokensSavedByType: { ...persisted.tokensSavedByType },
+    currentTurn: persisted.currentTurn,
+    countedSavingsIds: new Set(persisted.countedSavingsIds),
+    turnHistory: persisted.turnHistory.map((snapshot) => ({ ...snapshot })),
+    projectPath: persisted.projectPath,
+    lastContextTokens: persisted.lastContextTokens,
+    lastContextPercent: persisted.lastContextPercent,
+    lastContextWindow: persisted.lastContextWindow,
+  };
+}
+
 // Private stable stringify helper
 function stableStringify(value: unknown): string {
   return JSON.stringify(value, getSortedKeysReplacer());
+}
+
+function serializeToolRecord(record: ToolRecord): ToolRecord {
+  return {
+    ...record,
+    shapedContent: record.shapedContent?.map((block) => ({ ...block })),
+  };
+}
+
+function hydrateToolRecord(record: ToolRecord): ToolRecord {
+  return {
+    ...record,
+    shapedContent: record.shapedContent?.map((block) => ({ ...block })),
+  };
 }
 
 function getSortedKeysReplacer(): (key: string, value: unknown) => unknown {

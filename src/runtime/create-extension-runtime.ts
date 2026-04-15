@@ -1,24 +1,18 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
-import { createSessionState, getOrCreateToolRecord } from "../state.js";
+import { createSessionState, getOrCreateToolRecord, hydrateSessionState } from "../state.js";
 import { loadSessionState, resolveSessionId, saveSessionState } from "../persistence/state-store.js";
 import type { PCNConfig } from "../config.js";
 import { materializeContext } from "../strategies/materialize.js";
+import type { SessionState } from "../types.js";
 
-const sessionMap = new Map<string, ReturnType<typeof createSessionState>>();
+const sessionMap = new Map<string, SessionState>();
 
-function getState(sessionId: string): ReturnType<typeof createSessionState> {
+function getState(sessionId: string): SessionState {
   let state = sessionMap.get(sessionId);
   if (!state) {
     const persisted = loadSessionState(sessionId);
     if (persisted) {
-      state = createSessionState(persisted.projectPath);
-      state.omitRanges = persisted.omitRanges;
-      state.currentTurn = persisted.currentTurn;
-      state.tokensKeptOutTotal = persisted.tokensKeptOutTotal;
-      state.tokensSaved = persisted.tokensSaved;
-      state.tokensKeptOutByType = persisted.tokensKeptOutByType;
-      state.tokensSavedByType = persisted.tokensSavedByType;
-      state.turnHistory = persisted.turnHistory;
+      state = hydrateSessionState(persisted);
     } else {
       state = createSessionState(sessionId);
     }
@@ -36,7 +30,7 @@ function persistState(sessionId: string): void {
 
 export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): void {
   pi.on("tool_call", (event, ctx) => {
-    const sessionId = resolveSessionId(ctx as any);
+    const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId);
     getOrCreateToolRecord(
       state,
@@ -49,7 +43,7 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
   });
 
   pi.on("tool_result", (event, ctx) => {
-    const sessionId = resolveSessionId(ctx as any);
+    const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId);
     if (event.isError) {
       const rec = state.toolCalls.get(event.toolCallId);
@@ -60,14 +54,39 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
   });
 
   pi.on("context", async (event, ctx) => {
-    const sessionId = resolveSessionId(ctx as any);
+    const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId);
     return materializeContext(event.messages, { state, config });
   });
 
   pi.on("turn_end", (event, ctx) => {
-    const sessionId = resolveSessionId(ctx as any);
+    const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId);
+
+    const usage = ctx.getContextUsage();
+    if (usage) {
+      state.lastContextTokens = usage.tokens;
+      state.lastContextPercent = usage.percent;
+      state.lastContextWindow = usage.contextWindow;
+    }
+
+    const previousTotals = state.turnHistory.reduce(
+      (acc, snapshot) => ({
+        tokensSaved: acc.tokensSaved + snapshot.tokensSavedDelta,
+        tokensKeptOut: acc.tokensKeptOut + snapshot.tokensKeptOutDelta,
+      }),
+      { tokensSaved: 0, tokensKeptOut: 0 },
+    );
+
+    state.turnHistory.push({
+      turnIndex: event.turnIndex,
+      toolCount: event.toolResults.length,
+      messageCountAfterTurn: ctx.sessionManager.getEntries().length,
+      tokensKeptOutDelta: Math.max(0, state.tokensKeptOutTotal - previousTotals.tokensKeptOut),
+      tokensSavedDelta: Math.max(0, state.tokensSaved - previousTotals.tokensSaved),
+      timestamp: Date.now(),
+    });
+
     state.currentTurn = typeof event.turnIndex === "number" ? event.turnIndex + 1 : state.currentTurn + 1;
     persistState(sessionId);
   });
@@ -87,7 +106,7 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
   pi.on("session_before_compact", (_event, _ctx) => undefined);
 
   pi.on("agent_end", (_event, ctx) => {
-    const sessionId = resolveSessionId(ctx as any);
+    const sessionId = resolveSessionId(ctx);
     persistState(sessionId);
   });
 
