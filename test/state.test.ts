@@ -15,13 +15,17 @@ describe("session state", () => {
     const r2 = getOrCreateToolRecord(s, "c1", "read", { path: "a.ts" }, false, 0);
     expect(r2).toBe(r);
   });
-  it("credits savings with gating", () => {
+  it("credits saved tokens once while counting kept-out tokens for repeated omissions", () => {
     const s = createSessionState("/tmp");
     expect(creditSavings(s, "c1", "dedup", 500, 500)).toBe(true);
     expect(s.tokensSaved).toBe(500);
+    expect(s.tokensKeptOutTotal).toBe(500);
     expect(creditSavings(s, "c1", "dedup", 500, 500)).toBe(false);
+    expect(s.tokensSaved).toBe(500);
+    expect(s.tokensKeptOutTotal).toBe(1000);
     expect(creditSavings(s, "c1", "code_filter", 300, 300)).toBe(true);
     expect(s.tokensSaved).toBe(800);
+    expect(s.tokensKeptOutTotal).toBe(1300);
   });
 
   it("serializes and hydrates maps, sets, and turn snapshots", () => {

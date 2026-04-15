@@ -78,18 +78,30 @@ function resolveContextTokens(state: SessionState, ctx: { getContextUsage(): { t
   return state.lastContextTokens;
 }
 
+function resolveCompactionTokensBefore(
+  state: SessionState,
+  ctx: { getContextUsage(): { tokens: number | null } | undefined },
+  preparation: { tokensBefore?: number | null },
+): number | null {
+  if (typeof preparation.tokensBefore === "number" && Number.isFinite(preparation.tokensBefore)) {
+    return preparation.tokensBefore;
+  }
+
+  return resolveContextTokens(state, ctx);
+}
+
 function buildNativeCompactionResult(
   sessionId: string,
   state: SessionState,
   config: PCNConfig,
   ctx: { getContextUsage(): { tokens: number | null } | undefined },
-  preparation: { firstKeptEntryId: string },
+  preparation: { firstKeptEntryId: string; tokensBefore?: number | null },
 ): { cancel?: boolean; compaction?: { summary: string; firstKeptEntryId: string; tokensBefore: number } } | undefined {
   if (!config.nativeCompactionIntegration.enabled) {
     return undefined;
   }
 
-  const contextTokens = resolveContextTokens(state, ctx);
+  const contextTokens = resolveCompactionTokensBefore(state, ctx, preparation);
   const threshold = config.nativeCompactionIntegration.maxContextSize;
   if (contextTokens === null || contextTokens < threshold) {
     return undefined;
@@ -224,7 +236,7 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
     const materialized = materializeContext(event.messages, { state, config });
     return {
       ...materialized,
-      messages: applyPruneTargets(materialized.messages ?? event.messages, state.pruneTargets),
+      messages: applyPruneTargets(materialized.messages ?? event.messages, state.pruneTargets, state),
     };
   });
 

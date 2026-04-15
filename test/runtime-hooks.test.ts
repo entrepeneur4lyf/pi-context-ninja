@@ -195,6 +195,11 @@ describe("runtime hook registration", () => {
     config.dashboard.enabled = false;
     config.backgroundIndexing.enabled = true;
     config.backgroundIndexing.minRangeTurns = 1;
+    config.strategies.shortCircuit.enabled = false;
+    config.strategies.codeFilter.enabled = false;
+    config.strategies.truncation.enabled = false;
+    config.strategies.errorPurge.enabled = false;
+    config.strategies.deduplication.enabled = false;
 
     const { calls, pi } = createPiMock();
     createExtensionRuntime(pi, config);
@@ -425,6 +430,177 @@ describe("runtime hook registration", () => {
     expect(readIndexEntries(getIndexPath("/tmp/project"))).toHaveLength(1);
   });
 
+  it("counts repeated prune-target omissions in kept-out metrics while gating saved credit", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = false;
+    config.dashboard.enabled = false;
+    config.backgroundIndexing.enabled = true;
+    config.backgroundIndexing.minRangeTurns = 1;
+
+    const { calls, pi } = createPiMock();
+    createExtensionRuntime(pi, config);
+
+    const ctx = createContext("session-background-kept-out");
+    const longBody = "line\n".repeat(400);
+
+    calls.get("tool_call")?.(
+      {
+        toolCallId: "read-1",
+        toolName: "read",
+        input: { path: "README.md" },
+      },
+      ctx,
+    );
+
+    await calls.get("turn_end")?.(
+      {
+        turnIndex: 3,
+        message: { role: "assistant", content: "done" },
+        toolResults: [
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: longBody }],
+            toolName: "read",
+            isError: false,
+            toolCallId: "read-1",
+          },
+        ],
+      },
+      ctx,
+    );
+
+    await calls.get("agent_end")?.(
+      {
+        messages: [
+          { role: "user", content: [{ type: "text", text: "show me the file" }] },
+          { role: "assistant", content: "running read" },
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: longBody }],
+            toolName: "read",
+            isError: false,
+            toolCallId: "read-1",
+          },
+        ],
+      },
+      ctx,
+    );
+
+    const contextMessages = [
+      { role: "user", content: [{ type: "text", text: "show me the file" }] },
+      { role: "assistant", content: "running read" },
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: longBody }],
+        toolName: "read",
+        isError: false,
+        toolCallId: "read-1",
+      },
+    ];
+
+    await calls.get("context")?.({ messages: contextMessages }, ctx);
+    await calls.get("context")?.({ messages: contextMessages }, ctx);
+
+    await calls.get("turn_end")?.(
+      {
+        turnIndex: 4,
+        message: { role: "assistant", content: "reused indexed result" },
+        toolResults: [],
+      },
+      ctx,
+    );
+
+    const { loadSessionState } = await loadStateStore();
+    const persisted = loadSessionState("session-background-kept-out");
+    const saved = persisted?.tokensSavedByType.background_index ?? 0;
+    const keptOut = persisted?.tokensKeptOutByType.background_index ?? 0;
+
+    expect(saved).toBeGreaterThan(0);
+    expect(keptOut).toBe(saved * 2);
+    expect(persisted?.tokensSaved).toBeGreaterThanOrEqual(saved);
+    expect(persisted?.tokensKeptOutTotal).toBeGreaterThanOrEqual(keptOut);
+    expect(persisted?.turnHistory.at(-1)).toMatchObject({
+      turnIndex: 4,
+    });
+    expect((persisted?.turnHistory.at(-1)?.tokensSavedDelta ?? 0)).toBeGreaterThanOrEqual(saved);
+    expect((persisted?.turnHistory.at(-1)?.tokensKeptOutDelta ?? 0)).toBeGreaterThanOrEqual(keptOut);
+  });
+
+  it("counts repeated materialized omissions in kept-out metrics while gating saved credit", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = false;
+    config.dashboard.enabled = false;
+    config.backgroundIndexing.enabled = false;
+    config.strategies.shortCircuit.enabled = false;
+    config.strategies.codeFilter.enabled = false;
+    config.strategies.truncation.enabled = false;
+    config.strategies.errorPurge.enabled = false;
+    config.strategies.deduplication.maxOccurrences = 1;
+
+    const { calls, pi } = createPiMock();
+    createExtensionRuntime(pi, config);
+
+    const ctx = createContext("session-repeat-kept-out");
+    const messages = [
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: "same payload\n".repeat(200) }],
+        toolName: "read",
+        isError: false,
+        toolCallId: "read-1",
+      },
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: "same payload\n".repeat(200) }],
+        toolName: "read",
+        isError: false,
+        toolCallId: "read-2",
+      },
+    ];
+
+    calls.get("tool_call")?.(
+      {
+        toolCallId: "read-1",
+        toolName: "read",
+        input: { path: "README.md" },
+      },
+      ctx,
+    );
+    calls.get("tool_call")?.(
+      {
+        toolCallId: "read-2",
+        toolName: "read",
+        input: { path: "README-copy.md" },
+      },
+      ctx,
+    );
+
+    await calls.get("context")?.({ messages }, ctx);
+    await calls.get("context")?.({ messages }, ctx);
+
+    await calls.get("turn_end")?.(
+      {
+        turnIndex: 1,
+        message: { role: "assistant", content: "done" },
+        toolResults: [],
+      },
+      ctx,
+    );
+
+    const { loadSessionState } = await loadStateStore();
+    const persisted = loadSessionState("session-repeat-kept-out");
+    const saved = persisted?.tokensSavedByType.dedup ?? 0;
+    const keptOut = persisted?.tokensKeptOutByType.dedup ?? 0;
+
+    expect(saved).toBeGreaterThan(0);
+    expect(keptOut).toBe(saved * 2);
+    expect(persisted?.turnHistory.at(-1)).toMatchObject({
+      turnIndex: 1,
+    });
+    expect((persisted?.turnHistory.at(-1)?.tokensSavedDelta ?? 0)).toBeGreaterThanOrEqual(saved);
+    expect((persisted?.turnHistory.at(-1)?.tokensKeptOutDelta ?? 0)).toBeGreaterThanOrEqual(keptOut);
+  });
+
   it("returns a native compaction result from the indexed TOC when enabled", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;
@@ -482,6 +658,93 @@ describe("runtime hook registration", () => {
         tokensBefore: 4096,
       },
     });
+  });
+
+  it("uses preparation.tokensBefore as the authoritative native compaction threshold and payload value", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = false;
+    config.dashboard.enabled = false;
+    config.backgroundIndexing.enabled = true;
+    config.nativeCompactionIntegration.enabled = true;
+    config.nativeCompactionIntegration.fallbackOnFailure = true;
+    config.nativeCompactionIntegration.maxContextSize = 1000;
+
+    const projectPath = "/tmp/project";
+    const entries = [
+      buildIndexEntry(0, 10, "setup", 11),
+      buildIndexEntry(11, 20, "tests", 10),
+    ];
+    for (const entry of entries) {
+      appendIndexEntry(getIndexPath(projectPath), entry);
+    }
+
+    const { calls, pi } = createPiMock();
+    createExtensionRuntime(pi, config);
+
+    const handler = calls.get("session_before_compact");
+    const lowUsageCtx = {
+      cwd: projectPath,
+      sessionManager: {
+        getSessionId: () => "session-compact-authoritative",
+        getEntries: () => [{ id: "m1" }],
+      },
+      getContextUsage: () => ({ tokens: 200, percent: 0.05, contextWindow: 8192 }),
+    } as any;
+
+    const compacted = await handler?.(
+      {
+        type: "session_before_compact",
+        preparation: {
+          firstKeptEntryId: "entry-21",
+          messagesToSummarize: [],
+          turnPrefixMessages: [],
+          isSplitTurn: false,
+          tokensBefore: 4096,
+          fileOps: {},
+          settings: {},
+        },
+        branchEntries: [],
+        signal: new AbortController().signal,
+      },
+      lowUsageCtx,
+    );
+
+    expect(compacted).toEqual({
+      compaction: {
+        summary: formatTOC(entries),
+        firstKeptEntryId: "entry-21",
+        tokensBefore: 4096,
+      },
+    });
+
+    const highUsageCtx = {
+      cwd: projectPath,
+      sessionManager: {
+        getSessionId: () => "session-compact-authoritative-low",
+        getEntries: () => [{ id: "m1" }],
+      },
+      getContextUsage: () => ({ tokens: 4096, percent: 0.5, contextWindow: 8192 }),
+    } as any;
+
+    const skipped = await handler?.(
+      {
+        type: "session_before_compact",
+        preparation: {
+          firstKeptEntryId: "entry-21",
+          messagesToSummarize: [],
+          turnPrefixMessages: [],
+          isSplitTurn: false,
+          tokensBefore: 200,
+          fileOps: {},
+          settings: {},
+        },
+        branchEntries: [],
+        signal: new AbortController().signal,
+      },
+      highUsageCtx,
+    );
+
+    expect(skipped).toBeUndefined();
   });
 
   it("caps native compaction summaries to a compact size", async () => {

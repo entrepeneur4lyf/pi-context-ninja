@@ -1,10 +1,12 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { PruneTarget } from "../types.js";
+import type { PruneTarget, SessionState } from "../types.js";
 import {
   countToolTextBlocks,
+  extractTextContent,
   isToolResultMessage,
   replaceSingleToolTextContent,
 } from "../messages.js";
+import { creditSavings } from "../state.js";
 
 export function canApplyPruneTarget(message: AgentMessage): boolean {
   return isToolResultMessage(message) && countToolTextBlocks(message) === 1;
@@ -13,6 +15,7 @@ export function canApplyPruneTarget(message: AgentMessage): boolean {
 export function applyPruneTargets(
   messages: AgentMessage[],
   pruneTargets: PruneTarget[],
+  state?: SessionState,
 ): AgentMessage[] {
   if (pruneTargets.length === 0) {
     return [...messages];
@@ -33,6 +36,11 @@ export function applyPruneTargets(
     const replacementText = replacements.get(toolCallId);
     if (replacementText === undefined) {
       return message;
+    }
+
+    if (state) {
+      const omittedLength = Math.max(0, extractTextContent(message).length - replacementText.length);
+      creditSavings(state, toolCallId, "background_index", omittedLength, omittedLength);
     }
 
     return replaceSingleToolTextContent(message, replacementText);
