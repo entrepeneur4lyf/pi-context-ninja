@@ -3,7 +3,7 @@ import type { PersistedSessionState, SessionState } from "../types.js";
 import fs from "node:fs";
 import path from "node:path";
 import os from "node:os";
-import { serializeSessionState } from "../state.js";
+import { normalizePersistedSessionState, serializeSessionState } from "../state.js";
 
 export function getStateDir(): string {
   return path.resolve(process.env.PCN_STATE_DIR ?? path.join(os.homedir(), ".pi-ninja", "state"));
@@ -46,7 +46,7 @@ export function loadSessionState(sessionId: string): PersistedSessionState | nul
 
   try {
     const raw = fs.readFileSync(statePath, "utf8");
-    return JSON.parse(raw) as PersistedSessionState;
+    return normalizePersistedSessionState(JSON.parse(raw));
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return null;

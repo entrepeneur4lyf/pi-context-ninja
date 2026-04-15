@@ -112,6 +112,33 @@ export function hydrateSessionState(persisted: PersistedSessionState): SessionSt
   };
 }
 
+export function normalizePersistedSessionState(input: unknown): PersistedSessionState | null {
+  if (!isRecord(input)) {
+    return null;
+  }
+
+  const turnHistory = Array.isArray(input.turnHistory)
+    ? input.turnHistory.map(normalizeTurnSnapshot)
+    : [];
+
+  return {
+    toolCalls: normalizeToolCalls(input.toolCalls),
+    prunedToolIds: normalizeStringArray(input.prunedToolIds),
+    omitRanges: normalizeOmitRanges(input.omitRanges),
+    tokensKeptOutTotal: normalizeNumber(input.tokensKeptOutTotal),
+    tokensSaved: normalizeNumber(input.tokensSaved),
+    tokensKeptOutByType: normalizeRecord(input.tokensKeptOutByType),
+    tokensSavedByType: normalizeRecord(input.tokensSavedByType),
+    currentTurn: normalizeNumber(input.currentTurn),
+    countedSavingsIds: normalizeStringArray(input.countedSavingsIds),
+    turnHistory,
+    projectPath: typeof input.projectPath === "string" ? input.projectPath : "",
+    lastContextTokens: normalizeNullableNumber(input.lastContextTokens),
+    lastContextPercent: normalizeNullableNumber(input.lastContextPercent),
+    lastContextWindow: normalizeNullableNumber(input.lastContextWindow),
+  };
+}
+
 // Private stable stringify helper
 function stableStringify(value: unknown): string {
   return JSON.stringify(value, getSortedKeysReplacer());
@@ -129,6 +156,106 @@ function hydrateToolRecord(record: ToolRecord): ToolRecord {
     ...record,
     shapedContent: record.shapedContent?.map((block) => ({ ...block })),
   };
+}
+
+function normalizeToolCalls(value: unknown): [string, ToolRecord][] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((entry) => {
+    if (!Array.isArray(entry) || entry.length < 2 || typeof entry[0] !== "string" || !isRecord(entry[1])) {
+      return [];
+    }
+
+    return [[entry[0], normalizeToolRecord(entry[1])]];
+  });
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter((item): item is string => typeof item === "string");
+}
+
+function normalizeOmitRanges(value: unknown) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.filter(isRecord).map((range) => ({
+    startKey: typeof range.startKey === "string" ? range.startKey : "",
+    endKey: typeof range.endKey === "string" ? range.endKey : "",
+    turnRange: typeof range.turnRange === "string" ? range.turnRange : "",
+    indexedAt: normalizeNumber(range.indexedAt),
+    summaryRef: typeof range.summaryRef === "string" ? range.summaryRef : "",
+    messageCount: normalizeNumber(range.messageCount),
+  }));
+}
+
+function normalizeTurnSnapshot(value: unknown) {
+  if (!isRecord(value)) {
+    return {
+      turnIndex: 0,
+      toolCount: 0,
+      messageCountAfterTurn: 0,
+      tokensKeptOutDelta: 0,
+      tokensSavedDelta: 0,
+      timestamp: 0,
+    };
+  }
+
+  return {
+    turnIndex: normalizeNumber(value.turnIndex),
+    toolCount: normalizeNumber(value.toolCount),
+    messageCountAfterTurn: normalizeNumber(value.messageCountAfterTurn),
+    tokensKeptOutDelta: normalizeNumber(value.tokensKeptOutDelta),
+    tokensSavedDelta: normalizeNumber(value.tokensSavedDelta),
+    timestamp: normalizeNumber(value.timestamp),
+  };
+}
+
+function normalizeRecord(value: unknown): Record<string, number> {
+  if (!isRecord(value)) {
+    return {};
+  }
+
+  const result: Record<string, number> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    const normalized = normalizeNullableNumber(entry);
+    if (normalized !== null) {
+      result[key] = normalized;
+    }
+  }
+  return result;
+}
+
+function normalizeNumber(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+function normalizeNullableNumber(value: unknown): number | null {
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function normalizeToolRecord(value: Record<string, unknown>): ToolRecord {
+  return {
+    toolCallId: typeof value.toolCallId === "string" ? value.toolCallId : "",
+    toolName: typeof value.toolName === "string" ? value.toolName : "",
+    inputArgs: value.inputArgs,
+    inputFingerprint: typeof value.inputFingerprint === "string" ? value.inputFingerprint : "",
+    isError: typeof value.isError === "boolean" ? value.isError : false,
+    turnIndex: normalizeNumber(value.turnIndex),
+    timestamp: normalizeNumber(value.timestamp),
+    tokenEstimate: normalizeNumber(value.tokenEstimate),
+    shapedContent: Array.isArray(value.shapedContent)
+      ? (value.shapedContent.filter(isRecord).map((block) => ({ ...block })) as unknown as ToolRecord["shapedContent"])
+      : undefined,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function getSortedKeysReplacer(): (key: string, value: unknown) => unknown {

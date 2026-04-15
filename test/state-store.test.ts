@@ -93,4 +93,59 @@ describe("state store", () => {
     expect(path.extname(statePath)).toBe(".json");
     expect(fs.readdirSync(stateDir).some((entry) => entry.endsWith(".tmp"))).toBe(false);
   });
+
+  it("hydrates legacy persisted state files without crashing", async () => {
+    const { loadSessionState, getStatePath } = await loadStateStore();
+    const statePath = getStatePath("legacy");
+    const legacy = {
+      omitRanges: [
+        {
+          startKey: "a",
+          endKey: "b",
+          turnRange: "1-2",
+          indexedAt: 111,
+          summaryRef: "sum-1",
+          messageCount: 2,
+        },
+      ],
+      currentTurn: 7,
+      tokensKeptOutTotal: 111,
+      tokensSaved: 222,
+      tokensKeptOutByType: { dedup: 11 },
+      tokensSavedByType: { dedup: 22 },
+      turnHistory: [
+        {
+          turnIndex: 6,
+          toolCount: 1,
+          tokensKeptOutDelta: 33,
+          tokensSavedDelta: 44,
+          timestamp: 555,
+        },
+      ],
+      projectPath: "/tmp/project",
+    };
+
+    fs.writeFileSync(statePath, JSON.stringify(legacy, null, 2), "utf8");
+
+    expect(() => loadSessionState("legacy")).not.toThrow();
+    const loaded = loadSessionState("legacy");
+
+    expect(loaded).not.toBeNull();
+    expect(loaded?.currentTurn).toBe(7);
+    expect(loaded?.tokensKeptOutTotal).toBe(111);
+    expect(loaded?.tokensSaved).toBe(222);
+    expect(loaded?.projectPath).toBe("/tmp/project");
+    expect(loaded?.omitRanges).toEqual(legacy.omitRanges);
+    expect(loaded?.turnHistory[0]).toMatchObject({
+      turnIndex: 6,
+      toolCount: 1,
+      messageCountAfterTurn: 0,
+    });
+    expect(loaded?.toolCalls).toEqual([]);
+    expect(loaded?.prunedToolIds).toEqual([]);
+    expect(loaded?.countedSavingsIds).toEqual([]);
+    expect(loaded?.lastContextTokens).toBeNull();
+    expect(loaded?.lastContextPercent).toBeNull();
+    expect(loaded?.lastContextWindow).toBeNull();
+  });
 });
