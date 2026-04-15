@@ -9,6 +9,7 @@ export function createSessionState(projectPath: string): SessionState {
     toolCalls: new Map(),
     prunedToolIds: new Set(),
     pruneTargets: [],
+    lastIndexedTurn: -1,
     tokensKeptOutTotal: 0,
     tokensSaved: 0,
     tokensKeptOutByType: {},
@@ -77,6 +78,7 @@ export function serializeSessionState(state: SessionState): PersistedSessionStat
     ]),
     prunedToolIds: [...state.prunedToolIds],
     pruneTargets: state.pruneTargets.map((target) => ({ ...target })),
+    lastIndexedTurn: state.lastIndexedTurn,
     tokensKeptOutTotal: state.tokensKeptOutTotal,
     tokensSaved: state.tokensSaved,
     tokensKeptOutByType: { ...state.tokensKeptOutByType },
@@ -99,6 +101,7 @@ export function hydrateSessionState(persisted: PersistedSessionState): SessionSt
     ])),
     prunedToolIds: new Set(persisted.prunedToolIds),
     pruneTargets: persisted.pruneTargets.map((target) => ({ ...target })),
+    lastIndexedTurn: persisted.lastIndexedTurn,
     tokensKeptOutTotal: persisted.tokensKeptOutTotal,
     tokensSaved: persisted.tokensSaved,
     tokensKeptOutByType: { ...persisted.tokensKeptOutByType },
@@ -126,6 +129,7 @@ export function normalizePersistedSessionState(input: unknown): PersistedSession
     toolCalls: normalizeToolCalls(input.toolCalls),
     prunedToolIds: normalizeStringArray(input.prunedToolIds),
     pruneTargets: normalizePruneTargets(input.pruneTargets),
+    lastIndexedTurn: normalizeNumber(input.lastIndexedTurn, -1),
     tokensKeptOutTotal: normalizeNumber(input.tokensKeptOutTotal),
     tokensSaved: normalizeNumber(input.tokensSaved),
     tokensKeptOutByType: normalizeRecord(input.tokensKeptOutByType),
@@ -246,8 +250,8 @@ function normalizeRecord(value: unknown): Record<string, number> {
   return result;
 }
 
-function normalizeNumber(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+function normalizeNumber(value: unknown, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
 function normalizeNullableNumber(value: unknown): number | null {

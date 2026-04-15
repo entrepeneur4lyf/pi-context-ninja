@@ -5,7 +5,6 @@ import {
   countToolTextBlocks,
   extractTextContent,
   isToolResultMessage,
-  replaceToolContentWithText,
   replaceSingleToolTextContent,
 } from "../messages.js";
 import { creditSavings } from "../state.js";
@@ -50,6 +49,10 @@ export function materializeContext(
             config.strategies.errorPurge.maxTurnsAgo,
           )
         ) {
+          if (!canRewriteText) {
+            return msg;
+          }
+
           const candidate = makeErrorTombstone(config.strategies.errorPurge.maxTurnsAgo);
           creditSavings(
             state,
@@ -58,7 +61,7 @@ export function materializeContext(
             Math.max(0, originalText.length - candidate.length),
             Math.max(0, originalText.length - candidate.length),
           );
-          return replaceToolContentWithText(msg, candidate);
+          return replaceSingleToolTextContent(msg, candidate);
         }
       }
 

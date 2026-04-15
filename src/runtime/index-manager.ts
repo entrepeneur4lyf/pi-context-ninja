@@ -18,10 +18,9 @@ export function refreshRangeIndex(
     return [];
   }
 
-  const lastIndexedTurn = state.pruneTargets.at(-1)?.turnIndex ?? -1;
   const stale = selectStaleRanges(
     state.currentTurn,
-    lastIndexedTurn,
+    state.lastIndexedTurn,
     config.backgroundIndexing.minRangeTurns,
   );
 
@@ -75,6 +74,7 @@ export function refreshRangeIndex(
   appendIndexEntry(getIndexPath(projectPath || "default"), entry);
 
   state.pruneTargets.push(...pruneTargets);
+  state.lastIndexedTurn = stale.endTurn;
 
   return pruneTargets;
 }

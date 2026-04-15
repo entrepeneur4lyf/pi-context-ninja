@@ -34,6 +34,7 @@ describe("state store", () => {
     const { saveSessionState, loadSessionState, getStatePath } = await loadStateStore();
     const s = createSessionState("/tmp");
     s.currentTurn = 5;
+    s.lastIndexedTurn = 4;
     s.tokensKeptOutTotal = 1000;
     s.pruneTargets.push({
       toolCallId: "call-2",
@@ -69,6 +70,7 @@ describe("state store", () => {
 
     expect(loaded).not.toBeNull();
     expect(loaded?.currentTurn).toBe(5);
+    expect(loaded?.lastIndexedTurn).toBe(4);
     expect(loaded?.tokensKeptOutTotal).toBe(1000);
     expect(persistedJson).not.toHaveProperty("omitRanges");
     expect(loaded?.toolCalls).toEqual([
@@ -135,6 +137,7 @@ describe("state store", () => {
         },
       ],
       currentTurn: 7,
+      lastIndexedTurn: 6,
       tokensKeptOutTotal: 111,
       tokensSaved: 222,
       tokensKeptOutByType: { dedup: 11 },
@@ -167,6 +170,7 @@ describe("state store", () => {
 
     expect(loaded).not.toBeNull();
     expect(loaded?.currentTurn).toBe(7);
+    expect(loaded?.lastIndexedTurn).toBe(6);
     expect(loaded?.tokensKeptOutTotal).toBe(111);
     expect(loaded?.tokensSaved).toBe(222);
     expect(loaded?.projectPath).toBe("/tmp/project");

@@ -35,6 +35,7 @@ export interface PersistedSessionState {
   toolCalls: PersistedToolCall[];
   prunedToolIds: string[];
   pruneTargets: PruneTarget[];
+  lastIndexedTurn: number;
   tokensKeptOutTotal: number;
   tokensSaved: number;
   tokensKeptOutByType: Record<string, number>;
@@ -60,6 +61,7 @@ export interface SessionState {
   toolCalls: Map<string, ToolRecord>;
   prunedToolIds: Set<string>;
   pruneTargets: PruneTarget[];
+  lastIndexedTurn: number;
   tokensKeptOutTotal: number;
   tokensSaved: number;
   tokensKeptOutByType: Record<string, number>;

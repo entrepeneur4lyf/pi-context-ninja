@@ -184,4 +184,105 @@ describe("index-store", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
     delete process.env.PCN_INDEX_DIR;
   });
+
+  it("tracks stale-range progress by indexed window end turn so successive refreshes do not overlap", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-index-manager-"));
+    process.env.PCN_INDEX_DIR = tmpDir;
+
+    const state = createSessionState("session-1");
+    state.currentTurn = 8;
+    state.toolCalls.set("call-0", {
+      toolCallId: "call-0",
+      toolName: "read",
+      inputArgs: { path: "0.ts" },
+      inputFingerprint: "{\"path\":\"0.ts\"}",
+      isError: false,
+      turnIndex: 0,
+      timestamp: 1,
+      tokenEstimate: 10,
+    });
+    state.toolCalls.set("call-1", {
+      toolCallId: "call-1",
+      toolName: "read",
+      inputArgs: { path: "1.ts" },
+      inputFingerprint: "{\"path\":\"1.ts\"}",
+      isError: false,
+      turnIndex: 2,
+      timestamp: 2,
+      tokenEstimate: 10,
+    });
+    state.toolCalls.set("call-2", {
+      toolCallId: "call-2",
+      toolName: "read",
+      inputArgs: { path: "5.ts" },
+      inputFingerprint: "{\"path\":\"5.ts\"}",
+      isError: false,
+      turnIndex: 5,
+      timestamp: 3,
+      tokenEstimate: 10,
+    });
+    state.toolCalls.set("call-3", {
+      toolCallId: "call-3",
+      toolName: "read",
+      inputArgs: { path: "6.ts" },
+      inputFingerprint: "{\"path\":\"6.ts\"}",
+      isError: false,
+      turnIndex: 6,
+      timestamp: 4,
+      tokenEstimate: 10,
+    });
+
+    const config = defaultConfig();
+    config.backgroundIndexing.enabled = true;
+    config.backgroundIndexing.minRangeTurns = 1;
+
+    refreshRangeIndex([
+      {
+        role: "toolResult",
+        toolCallId: "call-0",
+        toolName: "read",
+        isError: false,
+        content: [{ type: "text", text: "turn 0" }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-1",
+        toolName: "read",
+        isError: false,
+        content: [{ type: "text", text: "turn 2" }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-2",
+        toolName: "read",
+        isError: false,
+        content: [{ type: "text", text: "turn 5" }],
+      },
+    ] as any, state, config, "/workspace/project-b");
+
+    state.currentTurn = 10;
+    refreshRangeIndex([
+      {
+        role: "toolResult",
+        toolCallId: "call-2",
+        toolName: "read",
+        isError: false,
+        content: [{ type: "text", text: "turn 5" }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "call-3",
+        toolName: "read",
+        isError: false,
+        content: [{ type: "text", text: "turn 6" }],
+      },
+    ] as any, state, config, "/workspace/project-b");
+
+    const entries = readIndexEntries(getIndexPath("/workspace/project-b"));
+    expect(entries).toHaveLength(2);
+    expect(entries.map((entry) => entry.turnRange)).toEqual(["0-4", "5-6"]);
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    delete process.env.PCN_INDEX_DIR;
+  });
 });

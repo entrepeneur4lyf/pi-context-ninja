@@ -205,7 +205,7 @@ describe("materialize", () => {
     expect(result.messages?.[0]).toEqual(msgs[0]);
   });
 
-  it("tombstones stale mixed-content error tool results", () => {
+  it("declines stale-error purge for mixed-content tool results with multiple text blocks", () => {
     const state = createSessionState("/tmp");
     state.currentTurn = 10;
     state.toolCalls.set("t1", {
@@ -245,15 +245,57 @@ describe("materialize", () => {
     const result = materializeContext(msgs, { state, config: cfg });
     const toolMsg = result.messages?.[0] as any;
 
+    expect(toolMsg.content).toEqual(msgs[0].content);
+  });
+
+  it("purges stale mixed-content error results with a single text block while preserving non-text content", () => {
+    const state = createSessionState("/tmp");
+    state.currentTurn = 10;
+    state.toolCalls.set("t1", {
+      toolCallId: "t1",
+      toolName: "bash",
+      inputArgs: {},
+      inputFingerprint: "bash::{}",
+      isError: true,
+      turnIndex: 2,
+      timestamp: Date.now(),
+      tokenEstimate: 10,
+    });
+
+    const cfg = defaultConfig();
+    cfg.strategies.errorPurge.enabled = true;
+    cfg.strategies.errorPurge.maxTurnsAgo = 3;
+    cfg.strategies.truncation.enabled = false;
+
+    const msgs = [
+      {
+        role: "toolResult",
+        content: [
+          { type: "image", data: "img-data", mimeType: "image/png" },
+          { type: "text", text: Array.from({ length: 20 }, (_, index) => `error line ${index + 1}`).join("\n") },
+        ],
+        toolName: "bash",
+        isError: true,
+        toolCallId: "t1",
+        _key: "t1",
+      },
+    ] as any;
+
+    const result = materializeContext(msgs, { state, config: cfg });
+    const toolMsg = result.messages?.[0] as any;
+
     expect(toolMsg.content).toEqual([
+      { type: "image", data: "img-data", mimeType: "image/png" },
       {
         type: "text",
         text: "[Error output removed -- tool failed more than 3 turns ago]",
       },
     ]);
+    expect(state.tokensSavedByType.error_purge ?? 0).toBeGreaterThan(0);
+    expect(state.tokensKeptOutByType.error_purge ?? 0).toBeGreaterThan(0);
   });
 
-  it("tombstones stale mixed-content error tool results and records purge savings with truncation enabled", () => {
+  it("declines stale-error purge for larger mixed-content tool results with multiple text blocks", () => {
     const state = createSessionState("/tmp");
     state.currentTurn = 10;
     state.toolCalls.set("t1", {
@@ -293,14 +335,9 @@ describe("materialize", () => {
     const result = materializeContext(msgs, { state, config: cfg });
     const toolMsg = result.messages?.[0] as any;
 
-    expect(toolMsg.content).toEqual([
-      {
-        type: "text",
-        text: "[Error output removed -- tool failed more than 3 turns ago]",
-      },
-    ]);
-    expect(state.tokensSavedByType.error_purge ?? 0).toBeGreaterThan(0);
-    expect(state.tokensKeptOutByType.error_purge ?? 0).toBeGreaterThan(0);
+    expect(toolMsg.content).toEqual(msgs[0].content);
+    expect(state.tokensSavedByType.error_purge ?? 0).toBe(0);
+    expect(state.tokensKeptOutByType.error_purge ?? 0).toBe(0);
   });
 
   it("still advances dedup tracking for mixed-content tool results", () => {
