@@ -52,6 +52,33 @@ function persistState(sessionId: string): void {
   }
 }
 
+function backfillObservedTurnIndices(
+  state: SessionState,
+  turnIndex: number,
+  toolResults: Array<{ toolCallId?: string }>,
+): void {
+  for (const toolResult of toolResults) {
+    if (typeof toolResult.toolCallId !== "string") {
+      continue;
+    }
+
+    const record = state.toolCalls.get(toolResult.toolCallId);
+    if (record && record.turnIndex < 0) {
+      record.turnIndex = turnIndex;
+    }
+  }
+
+  if (state.turnHistory.length > 0) {
+    return;
+  }
+
+  for (const record of state.toolCalls.values()) {
+    if (record.turnIndex < 0) {
+      record.turnIndex = turnIndex;
+    }
+  }
+}
+
 function appendSystemHint(systemPrompt: string, hintText: string): string {
   const trimmedSystemPrompt = systemPrompt.trimEnd();
   if (!trimmedSystemPrompt) {
@@ -243,6 +270,10 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
   pi.on("turn_end", async (event, ctx) => {
     const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId, ctx.cwd);
+
+    if (typeof event.turnIndex === "number" && Number.isFinite(event.turnIndex)) {
+      backfillObservedTurnIndices(state, event.turnIndex, event.toolResults);
+    }
 
     const usage = ctx.getContextUsage();
     if (usage) {

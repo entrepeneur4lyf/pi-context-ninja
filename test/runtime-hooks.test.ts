@@ -232,6 +232,15 @@ describe("runtime hook registration", () => {
       ctx,
     );
 
+    await calls.get("turn_end")?.(
+      {
+        turnIndex: 6,
+        message: { role: "assistant", content: "later" },
+        toolResults: [],
+      },
+      ctx,
+    );
+
     await calls.get("agent_end")?.(
       {
         messages: [
@@ -469,6 +478,15 @@ describe("runtime hook registration", () => {
       ctx,
     );
 
+    await calls.get("turn_end")?.(
+      {
+        turnIndex: 6,
+        message: { role: "assistant", content: "later" },
+        toolResults: [],
+      },
+      ctx,
+    );
+
     await calls.get("agent_end")?.(
       {
         messages: [
@@ -503,7 +521,7 @@ describe("runtime hook registration", () => {
 
     await calls.get("turn_end")?.(
       {
-        turnIndex: 4,
+        turnIndex: 7,
         message: { role: "assistant", content: "reused indexed result" },
         toolResults: [],
       },
@@ -520,7 +538,7 @@ describe("runtime hook registration", () => {
     expect(persisted?.tokensSaved).toBeGreaterThanOrEqual(saved);
     expect(persisted?.tokensKeptOutTotal).toBeGreaterThanOrEqual(keptOut);
     expect(persisted?.turnHistory.at(-1)).toMatchObject({
-      turnIndex: 4,
+      turnIndex: 7,
     });
     expect((persisted?.turnHistory.at(-1)?.tokensSavedDelta ?? 0)).toBeGreaterThanOrEqual(saved);
     expect((persisted?.turnHistory.at(-1)?.tokensKeptOutDelta ?? 0)).toBeGreaterThanOrEqual(keptOut);
@@ -916,5 +934,108 @@ describe("runtime hook registration", () => {
       turnIndex: 3,
       messageCountAfterTurn: 3,
     });
+  });
+
+  it("backfills first-observed tool turn indices from turn_end so resumed sessions do not age fresh results as stale", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = false;
+    config.dashboard.enabled = false;
+    config.backgroundIndexing.enabled = true;
+    config.backgroundIndexing.minRangeTurns = 1;
+    config.strategies.shortCircuit.enabled = false;
+    config.strategies.codeFilter.enabled = false;
+    config.strategies.truncation.enabled = false;
+    config.strategies.errorPurge.enabled = true;
+    config.strategies.errorPurge.maxTurnsAgo = 3;
+    config.strategies.deduplication.enabled = false;
+
+    const { calls, pi } = createPiMock();
+    createExtensionRuntime(pi, config);
+
+    const ctx = createContext("session-midstream");
+
+    calls.get("tool_call")?.(
+      {
+        toolCallId: "read-midstream",
+        toolName: "read",
+        input: { path: "README.md" },
+      },
+      ctx,
+    );
+
+    calls.get("tool_result")?.(
+      {
+        toolCallId: "read-midstream",
+        toolName: "read",
+        isError: true,
+        content: [{ type: "text", text: "boom" }],
+      },
+      ctx,
+    );
+
+    await calls.get("turn_end")?.(
+      {
+        turnIndex: 12,
+        message: { role: "assistant", content: "done" },
+        toolResults: [
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "boom" }],
+            toolName: "read",
+            isError: true,
+            toolCallId: "read-midstream",
+          },
+        ],
+      },
+      ctx,
+    );
+
+    const contextResult = await calls.get("context")?.(
+      {
+        messages: [
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "boom" }],
+            toolName: "read",
+            isError: true,
+            toolCallId: "read-midstream",
+          },
+        ],
+      },
+      ctx,
+    ) as { messages?: Array<{ content: Array<{ type: string; text?: string }> }> } | undefined;
+
+    expect(contextResult?.messages?.[0]?.content).toEqual([
+      { type: "text", text: "boom" },
+    ]);
+
+    await calls.get("agent_end")?.(
+      {
+        messages: [
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "fresh body" }],
+            toolName: "read",
+            isError: false,
+            toolCallId: "read-midstream",
+          },
+        ],
+      },
+      ctx,
+    );
+
+    const { loadSessionState } = await loadStateStore();
+    const persisted = loadSessionState("session-midstream");
+    expect(persisted?.toolCalls).toEqual([
+      [
+        "read-midstream",
+        expect.objectContaining({
+          turnIndex: 12,
+          isError: true,
+        }),
+      ],
+    ]);
+    expect(persisted?.pruneTargets).toEqual([]);
+    expect(readIndexEntries(getIndexPath("/tmp/project"))).toEqual([]);
   });
 });

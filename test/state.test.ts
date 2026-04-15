@@ -5,7 +5,7 @@ describe("session state", () => {
   it("creates fresh state", () => {
     const s = createSessionState("/tmp/p");
     expect(s.tokensKeptOutTotal).toBe(0);
-    expect(s.currentTurn).toBe(0);
+    expect(s.currentTurn).toBe(-1);
   });
   it("creates and retrieves tool records", () => {
     const s = createSessionState("/tmp");
