@@ -262,6 +262,46 @@ describe("materialize", () => {
     expect((result.messages as any)[1].content[0].text).toBe("[dedup: see earlier typescript result x1]");
   });
 
+  it("advances dedup bookkeeping for mixed-content duplicates without crediting savings", () => {
+    const state = createSessionState("/tmp");
+    const cfg = defaultConfig();
+    cfg.strategies.deduplication.maxOccurrences = 1;
+    cfg.strategies.shortCircuit.enabled = false;
+    cfg.strategies.codeFilter.enabled = false;
+    cfg.strategies.truncation.enabled = false;
+    cfg.strategies.errorPurge.enabled = false;
+
+    const msgs = [
+      {
+        role: "toolResult",
+        content: [
+          { type: "text", text: "alpha" },
+          { type: "image", data: "img-data", mimeType: "image/png" },
+          { type: "text", text: "beta" },
+        ],
+        toolName: "read",
+        isError: false,
+        toolCallId: "t1",
+        _key: "t1",
+      },
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: "alpha\nbeta" }],
+        toolName: "read",
+        isError: false,
+        toolCallId: "t2",
+        _key: "t2",
+      },
+    ] as any;
+
+    const result = materializeContext(msgs, { state, config: cfg });
+
+    expect(result.messages?.[0]).toEqual(msgs[0]);
+    expect((result.messages as any)[1].content[0].text).toBe("[dedup: see earlier read result x1]");
+    expect(state.tokensSavedByType.dedup ?? 0).toBe(0);
+    expect(state.tokensKeptOutByType.dedup ?? 0).toBe(0);
+  });
+
   it("deduplicates normalized content across distinct tool calls", () => {
     const state = createSessionState("/tmp");
     const cfg = defaultConfig();

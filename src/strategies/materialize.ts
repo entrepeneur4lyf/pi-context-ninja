@@ -118,14 +118,14 @@ export function materializeContext(
         config.strategies.deduplication.protectedTools,
       );
       if (candidate !== null) {
-        creditSavings(
-          state,
-          toolCallId,
-          "dedup",
-          Math.max(0, dedupText.length - candidate.length),
-          Math.max(0, dedupText.length - candidate.length),
-        );
         if (canRewriteText) {
+          creditSavings(
+            state,
+            toolCallId,
+            "dedup",
+            Math.max(0, dedupText.length - candidate.length),
+            Math.max(0, dedupText.length - candidate.length),
+          );
           rewriteText = candidate;
         }
       }

@@ -1,6 +1,6 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { OmitRange, PruneTarget } from "../types.js";
-import { isToolResultMessage, replaceToolTextContent } from "../messages.js";
+import { isToolResultMessage, replaceToolContentWithText } from "../messages.js";
 
 export function applyOmitRanges(
   messages: AgentMessage[],
@@ -52,7 +52,7 @@ export function applyPruneTargets(
       return message;
     }
 
-    return replaceToolTextContent(message, replacementText);
+    return replaceToolContentWithText(message, replacementText);
   });
 }
 
