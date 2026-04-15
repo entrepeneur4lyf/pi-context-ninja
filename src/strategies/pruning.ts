@@ -1,5 +1,6 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { OmitRange } from "../types.js";
+import type { OmitRange, PruneTarget } from "../types.js";
+import { isToolResultMessage, replaceToolTextContent } from "../messages.js";
 
 export function applyOmitRanges(
   messages: AgentMessage[],
@@ -24,6 +25,35 @@ export function applyOmitRanges(
   }
 
   return messages.filter((_, index) => !omit.has(index));
+}
+
+export function applyPruneTargets(
+  messages: AgentMessage[],
+  pruneTargets: PruneTarget[],
+): AgentMessage[] {
+  if (pruneTargets.length === 0) {
+    return [...messages];
+  }
+
+  const replacements = new Map(pruneTargets.map((target) => [target.toolCallId, target.replacementText]));
+
+  return messages.map((message) => {
+    if (!isToolResultMessage(message)) {
+      return message;
+    }
+
+    const toolCallId = (message as any).toolCallId;
+    if (typeof toolCallId !== "string") {
+      return message;
+    }
+
+    const replacementText = replacements.get(toolCallId);
+    if (replacementText === undefined) {
+      return message;
+    }
+
+    return replaceToolTextContent(message, replacementText);
+  });
 }
 
 export function createTombstone(strategy: string): string {

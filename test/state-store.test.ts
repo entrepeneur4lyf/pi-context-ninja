@@ -35,6 +35,13 @@ describe("state store", () => {
     const s = createSessionState("/tmp");
     s.currentTurn = 5;
     s.tokensKeptOutTotal = 1000;
+    s.pruneTargets.push({
+      toolCallId: "call-2",
+      turnIndex: 4,
+      indexedAt: 999,
+      summaryRef: "2-4",
+      replacementText: "[pruned: indexed call-2]",
+    });
     s.toolCalls.set("call-1", {
       toolCallId: "call-1",
       toolName: "read",
@@ -72,6 +79,15 @@ describe("state store", () => {
       ],
     ]);
     expect(loaded?.prunedToolIds).toEqual(["call-2"]);
+    expect(loaded?.pruneTargets).toEqual([
+      {
+        toolCallId: "call-2",
+        turnIndex: 4,
+        indexedAt: 999,
+        summaryRef: "2-4",
+        replacementText: "[pruned: indexed call-2]",
+      },
+    ]);
     expect(loaded?.countedSavingsIds).toEqual(["call-1:dedup"]);
     expect(loaded?.turnHistory[0]).toMatchObject({ messageCountAfterTurn: 9 });
   });
@@ -94,7 +110,7 @@ describe("state store", () => {
     expect(fs.readdirSync(stateDir).some((entry) => entry.endsWith(".tmp"))).toBe(false);
   });
 
-  it("hydrates legacy persisted state files without crashing", async () => {
+  it("drops legacy omit ranges instead of rehydrating them", async () => {
     const { loadSessionState, getStatePath } = await loadStateStore();
     const statePath = getStatePath("legacy");
     const legacy = {
@@ -151,17 +167,8 @@ describe("state store", () => {
     expect(loaded?.tokensKeptOutTotal).toBe(111);
     expect(loaded?.tokensSaved).toBe(222);
     expect(loaded?.projectPath).toBe("/tmp/project");
-    expect(loaded?.omitRanges).toEqual([
-      {
-        startTurn: 1,
-        endTurn: 2,
-        startOffset: 2,
-        endOffset: 8,
-        indexedAt: 111,
-        summaryRef: "sum-1",
-        messageCount: 2,
-      },
-    ]);
+    expect(loaded?.pruneTargets).toEqual([]);
+    expect((loaded as any)?.omitRanges).toBeUndefined();
     expect(loaded?.turnHistory[0]).toMatchObject({
       turnIndex: 0,
       toolCount: 1,

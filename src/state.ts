@@ -8,6 +8,7 @@ export function createSessionState(projectPath: string): SessionState {
   return {
     toolCalls: new Map(),
     prunedToolIds: new Set(),
+    pruneTargets: [],
     omitRanges: [],
     tokensKeptOutTotal: 0,
     tokensSaved: 0,
@@ -75,7 +76,7 @@ export function serializeSessionState(state: SessionState): PersistedSessionStat
       serializeToolRecord(record),
     ]),
     prunedToolIds: [...state.prunedToolIds],
-    omitRanges: state.omitRanges.map((range) => ({ ...range })),
+    pruneTargets: state.pruneTargets.map((target) => ({ ...target })),
     tokensKeptOutTotal: state.tokensKeptOutTotal,
     tokensSaved: state.tokensSaved,
     tokensKeptOutByType: { ...state.tokensKeptOutByType },
@@ -97,7 +98,8 @@ export function hydrateSessionState(persisted: PersistedSessionState): SessionSt
       hydrateToolRecord(record),
     ])),
     prunedToolIds: new Set(persisted.prunedToolIds),
-    omitRanges: persisted.omitRanges.map((range) => ({ ...range })),
+    pruneTargets: persisted.pruneTargets.map((target) => ({ ...target })),
+    omitRanges: [],
     tokensKeptOutTotal: persisted.tokensKeptOutTotal,
     tokensSaved: persisted.tokensSaved,
     tokensKeptOutByType: { ...persisted.tokensKeptOutByType },
@@ -124,7 +126,7 @@ export function normalizePersistedSessionState(input: unknown): PersistedSession
   return {
     toolCalls: normalizeToolCalls(input.toolCalls),
     prunedToolIds: normalizeStringArray(input.prunedToolIds),
-    omitRanges: normalizeOmitRanges(input.omitRanges, turnHistory),
+    pruneTargets: normalizePruneTargets(input.pruneTargets),
     tokensKeptOutTotal: normalizeNumber(input.tokensKeptOutTotal),
     tokensSaved: normalizeNumber(input.tokensSaved),
     tokensKeptOutByType: normalizeRecord(input.tokensKeptOutByType),
@@ -179,37 +181,31 @@ function normalizeStringArray(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
-function normalizeOmitRanges(value: unknown, turnHistory: Array<ReturnType<typeof normalizeTurnSnapshot>>) {
+function normalizePruneTargets(value: unknown) {
   if (!Array.isArray(value)) {
     return [];
   }
 
-  return value.filter(isRecord).flatMap((range) => {
-    const turnBounds = parseRangeTurns(range);
-    if (!turnBounds) {
-      return [];
-    }
+  return value.filter(isRecord).flatMap((target) => {
+    const turnIndex = normalizeNullableNumber(target.turnIndex);
+    const indexedAt = normalizeNullableNumber(target.indexedAt);
 
-    const { startTurn, endTurn } = turnBounds;
-    const indexedAt = normalizeNumber(range.indexedAt);
-    const messageCount = normalizeNumber(range.messageCount);
-    const summaryRef = typeof range.summaryRef === "string" && range.summaryRef.length > 0
-      ? range.summaryRef
-      : `${startTurn}-${endTurn}`;
-
-    const { startOffset, endOffset } = resolveTurnOffsets(turnHistory, startTurn, endTurn, messageCount);
-    if (startOffset === null || endOffset === null) {
+    if (
+      typeof target.toolCallId !== "string" ||
+      turnIndex === null ||
+      indexedAt === null ||
+      typeof target.summaryRef !== "string" ||
+      typeof target.replacementText !== "string"
+    ) {
       return [];
     }
 
     return [{
-      startTurn,
-      endTurn,
-      startOffset,
-      endOffset,
+      toolCallId: target.toolCallId,
+      turnIndex,
       indexedAt,
-      summaryRef,
-      messageCount,
+      summaryRef: target.summaryRef,
+      replacementText: target.replacementText,
     }];
   });
 }
@@ -257,55 +253,6 @@ function normalizeNumber(value: unknown): number {
 
 function normalizeNullableNumber(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function parseRangeTurns(range: Record<string, unknown>): { startTurn: number; endTurn: number } | null {
-  const startTurn = normalizeNullableNumber(range.startTurn);
-  const endTurn = normalizeNullableNumber(range.endTurn);
-
-  if (startTurn !== null && endTurn !== null) {
-    return { startTurn, endTurn };
-  }
-
-  if (typeof range.turnRange === "string") {
-    const match = range.turnRange.match(/^(\d+)\s*-\s*(\d+)$/);
-    if (match) {
-      return {
-        startTurn: Number.parseInt(match[1] ?? "0", 10),
-        endTurn: Number.parseInt(match[2] ?? "0", 10),
-      };
-    }
-  }
-
-  return null;
-}
-
-function resolveTurnOffsets(
-  turnHistory: Array<ReturnType<typeof normalizeTurnSnapshot>>,
-  startTurn: number,
-  endTurn: number,
-  messageCount: number,
-): { startOffset: number | null; endOffset: number | null } {
-  const previousTurn = turnHistory.find((entry) => entry.turnIndex === startTurn - 1);
-  const endTurnEntry = turnHistory.find((entry) => entry.turnIndex === endTurn);
-
-  if (startTurn > 0 && !previousTurn) {
-    return { startOffset: null, endOffset: null };
-  }
-  if (!endTurnEntry) {
-    return { startOffset: null, endOffset: null };
-  }
-
-  const startOffset = previousTurn?.messageCountAfterTurn ?? 0;
-  const derivedEndOffset = endTurnEntry.messageCountAfterTurn - 1;
-  const endOffset = derivedEndOffset >= startOffset
-    ? derivedEndOffset
-    : startOffset + Math.max(0, messageCount - 1);
-
-  return {
-    startOffset,
-    endOffset,
-  };
 }
 
 function normalizeToolRecord(value: Record<string, unknown>): ToolRecord {

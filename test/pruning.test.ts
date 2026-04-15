@@ -1,41 +1,49 @@
-import { describe, it, expect } from "vitest";
-import { applyOmitRanges } from "../src/strategies/pruning";
+import { describe, expect, it } from "vitest";
+import { applyPruneTargets } from "../src/strategies/pruning";
 
 describe("pruning", () => {
-  it("filters omitted ranges using transcript offsets", () => {
+  it("rewrites only targeted tool results and preserves conversation messages", () => {
     const messages = [
-      { role: "u", _k: "a", _key: "a" },
-      { role: "a", _k: "b", _key: "b" },
-      { role: "t", _k: "c", _key: "c" },
-      { role: "u", _k: "d", _key: "d" },
-    ] as any;
-    const ranges = [
+      { role: "user", content: [{ type: "text", text: "need file status" }] },
+      { role: "assistant", content: "running read" },
       {
-        startTurn: 1,
-        endTurn: 2,
-        startOffset: 1,
-        endOffset: 2,
-        indexedAt: 0,
-        summaryRef: "",
-        messageCount: 2,
+        role: "toolResult",
+        toolCallId: "read-1",
+        toolName: "read",
+        isError: false,
+        content: [{ type: "text", text: "very long file body" }],
       },
-    ];
+    ] as any;
 
-    const result = applyOmitRanges(messages, ranges);
+    const result = applyPruneTargets(messages, [
+      {
+        toolCallId: "read-1",
+        turnIndex: 1,
+        indexedAt: 123,
+        summaryRef: "1-1",
+        replacementText: "[pruned: indexed read result 1-1]",
+      },
+    ]);
 
-    expect(result).toHaveLength(2);
-    expect(result.map((msg: any) => msg._k)).toEqual(["a", "d"]);
+    expect(result).toHaveLength(3);
+    expect((result[0] as any).role).toBe("user");
+    expect((result[1] as any).role).toBe("assistant");
+    expect((result[2] as any).content[0].text).toBe("[pruned: indexed read result 1-1]");
   });
 
-  it("no-op with empty ranges keeps length 2", () => {
-    const messages = [
-      { role: "u", _k: "a", _key: "a" },
-      { role: "a", _k: "b", _key: "b" },
-    ] as any;
+  it("skips prune targets when the tool result is absent from the current context", () => {
+    const messages = [{ role: "user", content: [{ type: "text", text: "hello" }] }] as any;
 
-    const result = applyOmitRanges(messages, []);
-
-    expect(result).toHaveLength(2);
-    expect(result.map((msg: any) => msg._k)).toEqual(["a", "b"]);
+    expect(
+      applyPruneTargets(messages, [
+        {
+          toolCallId: "missing",
+          turnIndex: 3,
+          indexedAt: 123,
+          summaryRef: "2-3",
+          replacementText: "[pruned]",
+        },
+      ]),
+    ).toEqual(messages);
   });
 });
