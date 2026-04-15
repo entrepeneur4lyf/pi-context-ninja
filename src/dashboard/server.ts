@@ -21,6 +21,10 @@ interface SseClient {
   sessionId: string | null;
 }
 
+function normalizeSessionId(sessionId: string | null): string | null {
+  return typeof sessionId === "string" && sessionId.length > 0 ? sessionId : null;
+}
+
 function writeSse(res: ServerResponse, type: string, data: unknown): void {
   res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
 }
@@ -68,6 +72,10 @@ export function startDashboardServer(
     return lastSessionId;
   }
 
+  function getDefaultSessionId(): string | null {
+    return activeSessionId ?? getLastSessionId();
+  }
+
   function broadcastSnapshot(snapshot: AnalyticsSnapshot | null): void {
     for (const client of clients) {
       if (client.sessionId !== null) {
@@ -98,19 +106,31 @@ export function startDashboardServer(
     const requestUrl = new URL(req.url ?? "/", `http://${req.headers.host ?? `${options.host}:${options.port}`}`);
 
     if (requestUrl.pathname === "/" || requestUrl.pathname === "/index.html") {
+      const requestedSessionId = normalizeSessionId(requestUrl.searchParams.get("sessionId"));
+      if (!requestedSessionId) {
+        const defaultSessionId = getDefaultSessionId();
+        if (defaultSessionId) {
+          const redirectUrl = new URL(requestUrl.pathname, requestUrl);
+          redirectUrl.searchParams.set("sessionId", defaultSessionId);
+          res.writeHead(302, { Location: `${redirectUrl.pathname}${redirectUrl.search}` });
+          res.end();
+          return;
+        }
+      }
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
       res.end(renderDashboardPage());
       return;
     }
 
     if (requestUrl.pathname === "/snapshot") {
+      const sessionId = normalizeSessionId(requestUrl.searchParams.get("sessionId"));
       res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
-      res.end(JSON.stringify(getSnapshot(requestUrl.searchParams.get("sessionId") ?? undefined)));
+      res.end(JSON.stringify(getSnapshot(sessionId ?? undefined)));
       return;
     }
 
     if (requestUrl.pathname === "/events") {
-      const sessionId = requestUrl.searchParams.get("sessionId");
+      const sessionId = normalizeSessionId(requestUrl.searchParams.get("sessionId"));
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -119,7 +139,7 @@ export function startDashboardServer(
       res.write("retry: 1000\n");
       writeSse(res, "connected", {});
       const snapshot = getSnapshot(sessionId ?? undefined);
-      if (snapshot) {
+      if (snapshot !== null) {
         writeSse(res, "snapshot", snapshot);
       }
       const client: SseClient = { res, sessionId };

@@ -20,12 +20,36 @@ pre#events{background:#1a1a1a;padding:1rem;border-radius:8px;max-height:300px;ov
 <h2>Live Events</h2>
 <pre id="events"></pre>
 <script>
-const source=new EventSource('/events');
 const events=document.getElementById('events');
 const sessionIdEl=document.getElementById('session-id');
 const contextPctEl=document.getElementById('ctx-pct');
 const keptOutEl=document.getElementById('kept-out');
 const turnsEl=document.getElementById('turns');
+let currentSessionId=new URLSearchParams(window.location.search).get('sessionId');
+let source;
+function buildEventUrl(){
+  if(typeof currentSessionId!=='string'||currentSessionId.length===0){
+    return '/events';
+  }
+  return '/events?sessionId='+encodeURIComponent(currentSessionId);
+}
+function bindToSession(sessionId){
+  if(typeof sessionId!=='string'||sessionId.length===0||sessionId===currentSessionId){
+    return;
+  }
+  currentSessionId=sessionId;
+  const params=new URLSearchParams(window.location.search);
+  params.set('sessionId',sessionId);
+  const nextSearch=params.toString();
+  const nextUrl=window.location.pathname+(nextSearch.length>0?'?'+nextSearch:'');
+  window.history.replaceState(null,'',nextUrl);
+  source?.close();
+  connectEvents();
+}
+function connectEvents(){
+  source=new EventSource(buildEventUrl());
+  source.onmessage=handleMessage;
+}
 function resetSnapshotStats(){
   sessionIdEl.textContent='--';
   contextPctEl.textContent='--%';
@@ -42,13 +66,17 @@ function applySnapshotStats(d){
   keptOutEl.textContent=d.totals?.tokensKeptOutApprox!=null?d.totals.tokensKeptOutApprox.toLocaleString():'--';
   turnsEl.textContent=d.totalTurns!=null?d.totalTurns.toLocaleString():'--';
 }
-source.onmessage=(event)=>{
+function handleMessage(event){
   const payload=JSON.parse(event.data);
   events.textContent+=payload.type+': '+JSON.stringify(payload.data)+'\\n';
   events.scrollTop=events.scrollHeight;
   if(payload.type==='snapshot'){
     applySnapshotStats(payload.data);
+    if(!currentSessionId&&typeof payload.data?.sessionId==='string'&&payload.data.sessionId.length>0){
+      bindToSession(payload.data.sessionId);
+    }
   }
-};
+}
+connectEvents();
 </script></body></html>`;
 }

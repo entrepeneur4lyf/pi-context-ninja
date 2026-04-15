@@ -38,7 +38,7 @@ async function readSseChunk(reader: ReadableStreamDefaultReader<Uint8Array>, tim
   return new TextDecoder().decode(result.value);
 }
 
-function createDashboardScriptHarness() {
+function createDashboardScriptHarness({ search = "" }: { search?: string } = {}) {
   const html = renderDashboardPage();
   const scriptMatch = html.match(/<script>([\s\S]*)<\/script>/);
   if (!scriptMatch) {
@@ -55,24 +55,56 @@ function createDashboardScriptHarness() {
     ].map(([id, element]) => [id, element as { textContent: string; scrollTop?: number; scrollHeight?: number }]),
   );
 
-  let onmessageHandler: ((event: { data: string }) => void) | null = null;
+  const eventSources: Array<{
+    url: string;
+    closed: boolean;
+    onmessage: ((event: { data: string }) => void) | null;
+  }> = [];
+  const replaceStateUrls: string[] = [];
+  const location = {
+    search,
+    pathname: "/",
+    origin: "http://localhost",
+  };
+  const history = {
+    replaceState(_state: unknown, _title: string, url: string) {
+      replaceStateUrls.push(url);
+      const next = new URL(url, location.origin);
+      location.pathname = next.pathname;
+      location.search = next.search;
+    },
+  };
 
   const context = {
     JSON,
+    URL,
+    URLSearchParams,
+    encodeURIComponent,
     EventSource: class {
-      constructor(_url: string) {
+      private source;
+
+      constructor(url: string) {
+        this.source = { url, closed: false, onmessage: null as ((event: { data: string }) => void) | null };
+        eventSources.push(this.source);
         Object.defineProperty(this, "onmessage", {
           configurable: true,
           enumerable: true,
           get() {
-            return onmessageHandler;
+            return this.source.onmessage;
           },
           set(value: ((event: { data: string }) => void) | null) {
-            onmessageHandler = value;
+            this.source.onmessage = value;
           },
         });
       }
+
+      close() {
+        this.source.closed = true;
+      }
     },
+    history,
+    location,
+    window: { history, location },
     document: {
       getElementById(id: string) {
         const element = elements.get(id);
@@ -86,13 +118,13 @@ function createDashboardScriptHarness() {
 
   vm.runInNewContext(scriptMatch[1], context);
 
-  if (!onmessageHandler) {
+  if (!eventSources.at(-1)?.onmessage) {
     throw new Error("expected EventSource onmessage handler");
   }
 
   return {
     dispatchSnapshot(data: unknown) {
-      onmessageHandler?.({
+      eventSources.at(-1)?.onmessage?.({
         data: JSON.stringify({ type: "snapshot", data }),
       });
     },
@@ -103,11 +135,20 @@ function createDashboardScriptHarness() {
       }
       return element.textContent;
     },
+    getEventSourceUrls() {
+      return eventSources.map((source) => source.url);
+    },
+    getClosedEventSourceUrls() {
+      return eventSources.filter((source) => source.closed).map((source) => source.url);
+    },
+    getReplaceStateUrls() {
+      return replaceStateUrls;
+    },
   };
 }
 
 describe("dashboard server", () => {
-  it("serves the dashboard page, broadcasts snapshots, and closes cleanly", async () => {
+  it("redirects the default dashboard page to the active session and broadcasts scoped snapshots", async () => {
     const server = startDashboardServer({ port: 0, host: "127.0.0.1" });
     await once(server.server, "listening");
 
@@ -118,24 +159,6 @@ describe("dashboard server", () => {
       }
 
       const baseUrl = `http://127.0.0.1:${address.port}`;
-      const html = await fetch(`${baseUrl}/`).then((res) => res.text());
-      expect(html).toContain("Pi Context Ninja");
-      expect(html).toContain("EventSource('/events')");
-      expect(html).toContain("Tokens Kept Out");
-      expect(html).toContain("Session");
-      expect(html).toContain("session-id");
-      expect(html).not.toContain("Tokens Saved");
-
-      const response = await fetch(`${baseUrl}/events`);
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error("expected SSE response body");
-      }
-
-      const decoder = new TextDecoder();
-      const initial = decoder.decode((await reader.read()).value);
-      expect(initial).toContain('"type":"connected"');
-
       server.publish("session-a", {
         generatedAt: 1713081600000,
         sessionId: "session-a",
@@ -154,9 +177,29 @@ describe("dashboard server", () => {
         recentTurns: [],
       });
 
-      const next = decoder.decode((await reader.read()).value);
-      expect(next).toContain('"type":"snapshot"');
-      expect(next).toContain('"tokensSavedApprox":88');
+      const redirect = await fetch(`${baseUrl}/`, { redirect: "manual" });
+      expect(redirect.status).toBe(302);
+      expect(redirect.headers.get("location")).toBe("/?sessionId=session-a");
+
+      const html = await fetch(`${baseUrl}/?sessionId=session-a`).then((res) => res.text());
+      expect(html).toContain("Pi Context Ninja");
+      expect(html).toContain("URLSearchParams");
+      expect(html).toContain("Tokens Kept Out");
+      expect(html).toContain("Session");
+      expect(html).toContain("session-id");
+      expect(html).not.toContain("Tokens Saved");
+
+      const response = await fetch(`${baseUrl}/events?sessionId=session-a`);
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("expected SSE response body");
+      }
+
+      const decoder = new TextDecoder();
+      const initial = decoder.decode((await reader.read()).value);
+      expect(initial).toContain('"type":"connected"');
+      expect(initial).toContain('"type":"snapshot"');
+      expect(initial).toContain('"sessionId":"session-a"');
 
       await reader.cancel();
     } finally {
@@ -164,7 +207,7 @@ describe("dashboard server", () => {
     }
   });
 
-  it("reuses one dashboard instance across session runtimes on the same port", async () => {
+  it("reuses one dashboard instance across session runtimes on the same port without drifting the default page", async () => {
     const probe = http.createServer();
     await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
     const address = probe.address();
@@ -237,18 +280,34 @@ describe("dashboard server", () => {
       ),
     ).resolves.toBeUndefined();
 
-    const snapshot = await fetch(`http://127.0.0.1:${port}/snapshot`).then((res) => res.json());
-    expect(snapshot.sessionId).toBe("session-b");
-    expect(snapshot.totalTurns).toBe(1);
-    expect(snapshot.context.tokens).toBe(300);
-    expect(snapshot.totals.tokensKeptOutApprox).toBe(0);
+    const snapshotA = await fetch(`http://127.0.0.1:${port}/snapshot?sessionId=session-a`).then((res) => res.json());
+    expect(snapshotA.sessionId).toBe("session-a");
+    expect(snapshotA.totalTurns).toBe(1);
+    expect(snapshotA.context.tokens).toBe(420);
+
+    const snapshotB = await fetch(`http://127.0.0.1:${port}/snapshot?sessionId=session-b`).then((res) => res.json());
+    expect(snapshotB.sessionId).toBe("session-b");
+    expect(snapshotB.totalTurns).toBe(1);
+    expect(snapshotB.context.tokens).toBe(300);
+    expect(snapshotB.totals.tokensKeptOutApprox).toBe(0);
+
+    const defaultRedirect = await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
+    expect(defaultRedirect.status).toBe(302);
+    expect(defaultRedirect.headers.get("location")).toBe("/?sessionId=session-b");
 
     await expect(callsB.get("session_shutdown")?.({}, ctxB)).resolves.toBeUndefined();
 
-    const fallbackSnapshot = await fetch(`http://127.0.0.1:${port}/snapshot`).then((res) => res.json());
+    const fallbackRedirect = await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
+    expect(fallbackRedirect.status).toBe(302);
+    expect(fallbackRedirect.headers.get("location")).toBe("/?sessionId=session-a");
+
+    const fallbackSnapshot = await fetch(`http://127.0.0.1:${port}/snapshot?sessionId=session-a`).then((res) => res.json());
     expect(fallbackSnapshot.sessionId).toBe("session-a");
     expect(fallbackSnapshot.totalTurns).toBe(1);
     expect(fallbackSnapshot.context.tokens).toBe(420);
+
+    const clearedSnapshot = await fetch(`http://127.0.0.1:${port}/snapshot?sessionId=session-b`).then((res) => res.json());
+    expect(clearedSnapshot).toBeNull();
 
     await expect(callsA.get("session_shutdown")?.({}, ctxA)).resolves.toBeUndefined();
   });
@@ -319,6 +378,29 @@ describe("dashboard server", () => {
     }
   });
 
+  it("subscribes to the sessionId in the page URL when present", () => {
+    const page = createDashboardScriptHarness({ search: "?sessionId=session-a" });
+
+    expect(page.getEventSourceUrls()).toEqual(["/events?sessionId=session-a"]);
+  });
+
+  it("locks an initially unscoped page to the first session snapshot it receives", () => {
+    const page = createDashboardScriptHarness();
+
+    expect(page.getEventSourceUrls()).toEqual(["/events"]);
+
+    page.dispatchSnapshot({
+      sessionId: "session-a",
+      context: { percent: 0.42 },
+      totals: { tokensKeptOutApprox: 144 },
+      totalTurns: 3,
+    });
+
+    expect(page.getReplaceStateUrls()).toEqual(["/?sessionId=session-a"]);
+    expect(page.getClosedEventSourceUrls()).toEqual(["/events"]);
+    expect(page.getEventSourceUrls()).toEqual(["/events", "/events?sessionId=session-a"]);
+  });
+
   it("resets stale dashboard stat fields when the next snapshot omits them", () => {
     const page = createDashboardScriptHarness();
 
@@ -350,6 +432,15 @@ describe("dashboard server", () => {
 
 describe("runtime integration", () => {
   it("initializes analytics and dashboard once, records turn analytics, and shuts down cleanly", async () => {
+    const probe = http.createServer();
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+    const address = probe.address();
+    if (!address || typeof address === "string") {
+      throw new Error("expected a bound probe port");
+    }
+    const port = address.port;
+    await new Promise<void>((resolve, reject) => probe.close((error) => (error ? reject(error) : resolve())));
+
     const piCalls = new Map<string, (...args: any[]) => unknown>();
     const pi = {
       on: vi.fn((name: string, handler: (...args: any[]) => unknown) => {
@@ -361,7 +452,7 @@ describe("runtime integration", () => {
     config.analytics.enabled = true;
     config.analytics.dbPath = path.join(tmpDir, "analytics.sqlite");
     config.dashboard.enabled = true;
-    config.dashboard.port = 49123;
+    config.dashboard.port = port;
     config.dashboard.bindHost = "127.0.0.1";
 
     createExtensionRuntime(pi, config);
@@ -392,13 +483,13 @@ describe("runtime integration", () => {
       ctx,
     );
 
-    const snapshot = await fetch("http://127.0.0.1:49123/snapshot").then((res) => res.json());
+    const snapshot = await fetch(`http://127.0.0.1:${port}/snapshot?sessionId=session-a`).then((res) => res.json());
     expect(snapshot.totalTurns).toBe(1);
     expect(snapshot.context.tokens).toBe(420);
     expect(snapshot.totals.tokensSavedApprox).toBeGreaterThanOrEqual(0);
 
     await piCalls.get("session_shutdown")?.({}, ctx);
 
-    await expect(fetch("http://127.0.0.1:49123/snapshot")).rejects.toThrow();
+    await expect(fetch(`http://127.0.0.1:${port}/snapshot`)).rejects.toThrow();
   });
 });
