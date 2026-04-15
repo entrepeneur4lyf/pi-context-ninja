@@ -160,3 +160,10 @@ pi-context-ninja/
 | `npm run typecheck` | TypeScript type checking |
 | `npm run test` | Run test suite |
 | `npm run test:watch` | Run tests in watch mode |
+
+## Verification
+
+```bash
+rtk npm run check
+rtk npm test -- test/runtime-hooks.test.ts
+```
