@@ -2,7 +2,8 @@ export function fingerprintDedup(
   toolCallId: string,
   toolName: string,
   fingerprint: string,
-  seen: Set<string>,
+  seen: Map<string, number>,
+  maxOccurrences = 1,
   protectedTools: string[] = ["write", "edit"],
 ): string | null {
   void toolCallId;
@@ -11,11 +12,14 @@ export function fingerprintDedup(
     return null;
   }
 
-  if (seen.has(fingerprint)) {
-    return `[dedup: see latest ${toolName} result]`;
+  const limit = Math.max(1, maxOccurrences);
+  const nextCount = (seen.get(fingerprint) ?? 0) + 1;
+  seen.set(fingerprint, nextCount);
+
+  if (nextCount > limit) {
+    return `[dedup: see earlier ${toolName} result x${limit}]`;
   }
 
-  seen.add(fingerprint);
   return null;
 }
 

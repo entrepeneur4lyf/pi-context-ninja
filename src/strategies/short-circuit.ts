@@ -1,5 +1,10 @@
-export function shortCircuit(text: string, isErrorCtx: boolean): string | null {
+function estimateTokens(text: string): number {
+  return Math.max(1, Math.ceil(text.length / 4));
+}
+
+export function shortCircuit(text: string, isErrorCtx: boolean, minTokens = 0): string | null {
   if (isErrorCtx) return null;
+  if (estimateTokens(text) < minTokens) return null;
 
   try {
     const parsed = JSON.parse(text);

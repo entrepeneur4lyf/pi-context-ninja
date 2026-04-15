@@ -7,6 +7,8 @@ describe("materialize", () => {
   it("short-circuits successful JSON tool result", () => {
     const state = createSessionState("/tmp");
     state.currentTurn = 2;
+    const cfg = defaultConfig();
+    cfg.strategies.shortCircuit.minTokens = 4;
     state.toolCalls.set("t1", {
       toolCallId: "t1",
       toolName: "bash",
@@ -31,10 +33,41 @@ describe("materialize", () => {
       },
     ] as any;
 
-    const result = materializeContext(msgs, { state, config: defaultConfig() });
+    const result = materializeContext(msgs, { state, config: cfg });
     const toolMsg = result.messages?.find((m: any) => m.role === "toolResult") as any;
 
     expect(toolMsg.content[0].text).toBe("[ok]");
+  });
+
+  it("respects shortCircuit.minTokens during materialization", () => {
+    const state = createSessionState("/tmp");
+    const cfg = defaultConfig();
+    cfg.strategies.shortCircuit.minTokens = 9999;
+    state.toolCalls.set("t1", {
+      toolCallId: "t1",
+      toolName: "bash",
+      inputArgs: {},
+      inputFingerprint: "bash::{}",
+      isError: false,
+      turnIndex: 1,
+      timestamp: Date.now(),
+      tokenEstimate: 10,
+    });
+
+    const msgs = [
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: '{"status":"ok"}' }],
+        toolName: "bash",
+        isError: false,
+        toolCallId: "t1",
+        _key: "t1",
+      },
+    ] as any;
+
+    const result = materializeContext(msgs, { state, config: cfg });
+
+    expect((result.messages as any)[0].content[0].text).toBe('{"status":"ok"}');
   });
 
   it("preserves protected write results", () => {
@@ -59,6 +92,8 @@ describe("materialize", () => {
 
   it("preserves image blocks when rewriting tool results", () => {
     const state = createSessionState("/tmp");
+    const cfg = defaultConfig();
+    cfg.strategies.shortCircuit.minTokens = 4;
     state.currentTurn = 2;
     state.toolCalls.set("t1", {
       toolCallId: "t1",
@@ -81,11 +116,11 @@ describe("materialize", () => {
         toolName: "bash",
         isError: false,
         toolCallId: "t1",
-        _key: "t1",
-      },
+      _key: "t1",
+    },
     ] as any;
 
-    const result = materializeContext(msgs, { state, config: defaultConfig() });
+    const result = materializeContext(msgs, { state, config: cfg });
     const toolMsg = result.messages?.[0] as any;
 
     expect(toolMsg.content).toHaveLength(2);
@@ -125,5 +160,35 @@ describe("materialize", () => {
     expect(toolMsg.content[2]).toMatchObject({ type: "text" });
     expect(toolMsg.content[0].text).toBe(toolMsg.content[2].text);
     expect(toolMsg.content[0].text).toContain("[--- 2 lines omitted ---]");
+  });
+
+  it("deduplicates normalized content across distinct tool calls", () => {
+    const state = createSessionState("/tmp");
+    const cfg = defaultConfig();
+    cfg.strategies.deduplication.maxOccurrences = 1;
+
+    const msgs = [
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: "build 2026-04-14T10:11:12Z abcdefab-cdef-4123-89ab-abcdefabcdef" }],
+        toolName: "read",
+        isError: false,
+        toolCallId: "t1",
+        _key: "t1",
+      },
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: "build 2026-04-15T11:12:13Z 12345678-1234-4123-8234-1234567890ab" }],
+        toolName: "read",
+        isError: false,
+        toolCallId: "t2",
+        _key: "t2",
+      },
+    ] as any;
+
+    const result = materializeContext(msgs, { state, config: cfg });
+
+    expect((result.messages as any)[0].content[0].text).toContain("build");
+    expect((result.messages as any)[1].content[0].text).toBe("[dedup: see earlier read result x1]");
   });
 });

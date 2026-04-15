@@ -6,21 +6,98 @@ export function detectLanguage(text: string): string | null {
   return null;
 }
 
+export interface CodeFilterOptions {
+  keepDocstrings?: boolean;
+  maxBodyLines?: number;
+  keepImports?: boolean;
+}
+
 export function codeFilter(
   text: string,
   lang: string,
-  keepDocstrings = false,
+  options: CodeFilterOptions = {},
 ): string | null {
+  const keepDocstrings = options.keepDocstrings ?? false;
+  const maxBodyLines = options.maxBodyLines ?? 200;
+  const keepImports = options.keepImports ?? true;
+
   if (lang === "python") {
-    return filterPython(text, keepDocstrings);
+    return filterPython(text, keepDocstrings, maxBodyLines, keepImports);
   }
   if (["typescript", "javascript", "rust", "go"].includes(lang)) {
-    return filterBraceLang(text);
+    return filterBraceLang(text, maxBodyLines, keepImports);
   }
   return null;
 }
 
-function filterPython(text: string, keepDocstrings: boolean): string | null {
+function shouldFilterPython(text: string, maxBodyLines: number): boolean {
+  const lines = text.split("\n");
+  let inFunction = false;
+  let indentThreshold: number | null = null;
+  let bodyLineCount = 0;
+  let inDocstring = false;
+  let docstringQuote = "";
+
+  for (const line of lines) {
+    if (inDocstring) {
+      bodyLineCount += 1;
+      if (line.includes(docstringQuote)) {
+        inDocstring = false;
+      }
+      if (bodyLineCount >= maxBodyLines) return true;
+      continue;
+    }
+
+    const fnMatch = line.match(/^\s*(\s*)def\s+\w+/);
+    if (fnMatch && !inFunction) {
+      inFunction = true;
+      indentThreshold = fnMatch[1].length;
+      bodyLineCount = 0;
+      continue;
+    }
+
+    if (!inFunction) {
+      continue;
+    }
+
+    const indentMatch = line.match(/^(\s*)/);
+    const currentIndent = indentMatch ? indentMatch[1].length : 0;
+
+    if (line.trim() === "") {
+      continue;
+    }
+
+    if (currentIndent <= (indentThreshold ?? 0)) {
+      inFunction = false;
+      indentThreshold = null;
+      bodyLineCount = 0;
+      continue;
+    }
+
+    bodyLineCount += 1;
+    if (/^\s*(?:"""|''')/.test(line)) {
+      docstringQuote = line.includes("'''") ? "'''" : '"""';
+      if ((line.split(docstringQuote).length - 1) < 2) {
+        inDocstring = true;
+      }
+    }
+
+    if (bodyLineCount >= maxBodyLines) return true;
+  }
+
+  return false;
+}
+
+function filterPython(
+  text: string,
+  keepDocstrings: boolean,
+  maxBodyLines: number,
+  keepImports: boolean,
+): string | null {
+  if (!shouldFilterPython(text, maxBodyLines)) {
+    return null;
+  }
+
   const lines = text.split("\n");
   const result: string[] = [];
   let inFunction = false;
@@ -49,7 +126,7 @@ function filterPython(text: string, keepDocstrings: boolean): string | null {
 
       // Check if docstring starts on next or same line
       if (/"""/.test(line) || /'''/.test(line)) {
-        const q = /'''''/.test(line) ? "'''" : '"""';
+        const q = line.includes("'''") ? "'''" : '"""';
         if (keepDocstrings) {
           result.push(line);
         }
@@ -96,7 +173,7 @@ function filterPython(text: string, keepDocstrings: boolean): string | null {
 
       // Inside function body - check for docstring
       if (/^\s*(?:"""|''')/.test(line)) {
-        const q = /'''''/.test(line) ? "'''" : '"""';
+        const q = line.includes("'''") ? "'''" : '"""';
         if (keepDocstrings) {
           result.push(line);
         }
@@ -112,6 +189,9 @@ function filterPython(text: string, keepDocstrings: boolean): string | null {
     }
 
     // Not in a function
+    if (!keepImports && /^\s*(?:from\s+\S+\s+import\s+|import\s+)/.test(line)) {
+      continue;
+    }
     result.push(line);
   }
 
@@ -120,17 +200,62 @@ function filterPython(text: string, keepDocstrings: boolean): string | null {
   return filtered;
 }
 
-function filterBraceLang(text: string): string | null {
+function shouldFilterBraceLang(text: string, maxBodyLines: number): boolean {
+  const lines = text.split("\n");
+  let inFunction = false;
+  let depth = 0;
+  let bodyLineCount = 0;
+
+  for (const line of lines) {
+    if (inFunction) {
+      if (line.trim() !== "") {
+        bodyLineCount += 1;
+      }
+      for (const ch of line) {
+        if (ch === "{") depth++;
+        if (ch === "}") depth--;
+      }
+      if (bodyLineCount >= maxBodyLines) return true;
+      if (depth <= 0) {
+        inFunction = false;
+        depth = 0;
+        bodyLineCount = 0;
+      }
+      continue;
+    }
+
+    // Detect function start
+    if (/^\s*(?:export\s+)?(?:async\s+)?(?:function|fn)\s+/.test(line)) {
+      inFunction = true;
+      bodyLineCount = 0;
+      // Count braces on this line
+      for (const ch of line) {
+        if (ch === "{") depth++;
+        if (ch === "}") depth--;
+      }
+      if (depth <= 0) {
+        inFunction = false;
+        depth = 0;
+      }
+      continue;
+    }
+  }
+
+  return false;
+}
+
+function filterBraceLang(text: string, maxBodyLines: number, keepImports: boolean): string | null {
+  if (!shouldFilterBraceLang(text, maxBodyLines)) {
+    return null;
+  }
+
   const lines = text.split("\n");
   const result: string[] = [];
   let inFunction = false;
   let depth = 0;
 
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
+  for (const line of lines) {
     if (inFunction) {
-      // Count braces
       for (const ch of line) {
         if (ch === "{") depth++;
         if (ch === "}") depth--;
@@ -142,10 +267,8 @@ function filterBraceLang(text: string): string | null {
       continue;
     }
 
-    // Detect function start
     if (/^\s*(?:export\s+)?(?:async\s+)?(?:function|fn)\s+/.test(line)) {
       inFunction = true;
-      // Count braces on this line
       for (const ch of line) {
         if (ch === "{") depth++;
         if (ch === "}") depth--;
@@ -155,6 +278,10 @@ function filterBraceLang(text: string): string | null {
         depth = 0;
       }
       result.push(line);
+      continue;
+    }
+
+    if (!keepImports && /^\s*(?:import|export\s+.*from\s+)/.test(line)) {
       continue;
     }
 

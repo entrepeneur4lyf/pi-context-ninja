@@ -6,7 +6,7 @@ import { creditSavings } from "../state.js";
 import { shortCircuit } from "./short-circuit.js";
 import { codeFilter, detectLanguage } from "./code-filter.js";
 import { headTailTruncate } from "./truncation.js";
-import { fingerprintDedup } from "./dedup.js";
+import { fingerprintDedup, normalizeContent } from "./dedup.js";
 import { shouldPurgeError, makeErrorTombstone } from "./error-purge.js";
 import { applyOmitRanges } from "./pruning.js";
 
@@ -20,7 +20,7 @@ export function materializeContext(
   options: MaterializeOptions,
 ): { messages?: AgentMessage[] } {
   const { state, config } = options;
-  const seen = new Set<string>();
+  const seen = new Map<string, number>();
 
   const processed = messages.map((msg) => {
     if (!isToolResultMessage(msg)) {
@@ -40,7 +40,7 @@ export function materializeContext(
     let newText: string | null = null;
 
     if (config.strategies.shortCircuit.enabled && !isErr) {
-      const candidate = shortCircuit(currentText, isErr);
+      const candidate = shortCircuit(currentText, isErr, config.strategies.shortCircuit.minTokens);
       if (candidate !== null) {
         creditSavings(
           state,
@@ -60,7 +60,7 @@ export function materializeContext(
         const candidate = codeFilter(
           currentText,
           lang,
-          config.strategies.codeFilter.keepDocstrings,
+          config.strategies.codeFilter,
         );
         if (candidate !== null) {
           creditSavings(
@@ -93,12 +93,13 @@ export function materializeContext(
 
     if (config.strategies.deduplication.enabled) {
       const fingerprint =
-        (msg as any).__pcnFingerprint ?? `${toolName}::${toolCallId}`;
+        (msg as any).__pcnFingerprint ?? `${toolName}::${normalizeContent(currentText)}`;
       const candidate = fingerprintDedup(
         toolCallId,
         toolName,
         fingerprint,
         seen,
+        config.strategies.deduplication.maxOccurrences,
         config.strategies.deduplication.protectedTools,
       );
       if (candidate !== null) {
