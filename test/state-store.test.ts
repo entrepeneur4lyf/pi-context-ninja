@@ -35,6 +35,15 @@ describe("state store", () => {
     const s = createSessionState("/tmp");
     s.currentTurn = 5;
     s.tokensKeptOutTotal = 1000;
+    s.omitRanges.push({
+      startTurn: 2,
+      endTurn: 4,
+      startOffset: 1,
+      endOffset: 6,
+      indexedAt: 777,
+      summaryRef: "2-4",
+      messageCount: 6,
+    });
     s.pruneTargets.push({
       toolCallId: "call-2",
       turnIndex: 4,
@@ -79,6 +88,17 @@ describe("state store", () => {
       ],
     ]);
     expect(loaded?.prunedToolIds).toEqual(["call-2"]);
+    expect(loaded?.omitRanges).toEqual([
+      {
+        startTurn: 2,
+        endTurn: 4,
+        startOffset: 1,
+        endOffset: 6,
+        indexedAt: 777,
+        summaryRef: "2-4",
+        messageCount: 6,
+      },
+    ]);
     expect(loaded?.pruneTargets).toEqual([
       {
         toolCallId: "call-2",
@@ -167,8 +187,8 @@ describe("state store", () => {
     expect(loaded?.tokensKeptOutTotal).toBe(111);
     expect(loaded?.tokensSaved).toBe(222);
     expect(loaded?.projectPath).toBe("/tmp/project");
+    expect(loaded?.omitRanges).toEqual([]);
     expect(loaded?.pruneTargets).toEqual([]);
-    expect((loaded as any)?.omitRanges).toBeUndefined();
     expect(loaded?.turnHistory[0]).toMatchObject({
       turnIndex: 0,
       toolCount: 1,

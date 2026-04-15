@@ -1,6 +1,7 @@
 import type {
   PersistedSessionState,
   SessionState,
+  OmitRange,
   ToolRecord,
 } from "./types.js";
 
@@ -76,6 +77,7 @@ export function serializeSessionState(state: SessionState): PersistedSessionStat
       serializeToolRecord(record),
     ]),
     prunedToolIds: [...state.prunedToolIds],
+    omitRanges: state.omitRanges.map((range) => ({ ...range })),
     pruneTargets: state.pruneTargets.map((target) => ({ ...target })),
     tokensKeptOutTotal: state.tokensKeptOutTotal,
     tokensSaved: state.tokensSaved,
@@ -98,8 +100,8 @@ export function hydrateSessionState(persisted: PersistedSessionState): SessionSt
       hydrateToolRecord(record),
     ])),
     prunedToolIds: new Set(persisted.prunedToolIds),
+    omitRanges: persisted.omitRanges.map((range) => ({ ...range })),
     pruneTargets: persisted.pruneTargets.map((target) => ({ ...target })),
-    omitRanges: [],
     tokensKeptOutTotal: persisted.tokensKeptOutTotal,
     tokensSaved: persisted.tokensSaved,
     tokensKeptOutByType: { ...persisted.tokensKeptOutByType },
@@ -126,6 +128,7 @@ export function normalizePersistedSessionState(input: unknown): PersistedSession
   return {
     toolCalls: normalizeToolCalls(input.toolCalls),
     prunedToolIds: normalizeStringArray(input.prunedToolIds),
+    omitRanges: normalizeOmitRanges(input.omitRanges),
     pruneTargets: normalizePruneTargets(input.pruneTargets),
     tokensKeptOutTotal: normalizeNumber(input.tokensKeptOutTotal),
     tokensSaved: normalizeNumber(input.tokensSaved),
@@ -179,6 +182,43 @@ function normalizeStringArray(value: unknown): string[] {
     return [];
   }
   return value.filter((item): item is string => typeof item === "string");
+}
+
+function normalizeOmitRanges(value: unknown): OmitRange[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.filter(isRecord).flatMap((range) => {
+    const startTurn = normalizeNullableNumber(range.startTurn);
+    const endTurn = normalizeNullableNumber(range.endTurn);
+    const startOffset = normalizeNullableNumber(range.startOffset);
+    const endOffset = normalizeNullableNumber(range.endOffset);
+    const indexedAt = normalizeNullableNumber(range.indexedAt);
+    const messageCount = normalizeNullableNumber(range.messageCount);
+
+    if (
+      startTurn === null ||
+      endTurn === null ||
+      startOffset === null ||
+      endOffset === null ||
+      indexedAt === null ||
+      messageCount === null ||
+      typeof range.summaryRef !== "string"
+    ) {
+      return [];
+    }
+
+    return [{
+      startTurn,
+      endTurn,
+      startOffset,
+      endOffset,
+      indexedAt,
+      summaryRef: range.summaryRef,
+      messageCount,
+    }];
+  });
 }
 
 function normalizePruneTargets(value: unknown) {

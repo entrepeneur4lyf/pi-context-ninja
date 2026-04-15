@@ -44,6 +44,7 @@ export type PersistedToolCall = [string, ToolRecord];
 export interface PersistedSessionState {
   toolCalls: PersistedToolCall[];
   prunedToolIds: string[];
+  omitRanges: OmitRange[];
   pruneTargets: PruneTarget[];
   tokensKeptOutTotal: number;
   tokensSaved: number;
