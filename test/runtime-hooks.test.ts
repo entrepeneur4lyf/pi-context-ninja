@@ -260,6 +260,11 @@ describe("runtime hook registration", () => {
     expect(contextResult.messages?.[1]?.role).toBe("assistant");
     expect(contextResult.messages?.[2]?.role).toBe("toolResult");
     expect(contextResult.messages?.[2]?.content[0]?.text).toContain("[pruned:");
+
+    const { loadSessionState } = await loadStateStore();
+    const persisted = loadSessionState("session-background-index");
+    expect(persisted?.pruneTargets).toHaveLength(1);
+    expect(persisted?.omitRanges).toEqual([]);
   });
 
   it("does not create new broad pruning when no tool results are available", async () => {

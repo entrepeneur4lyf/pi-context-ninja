@@ -4,7 +4,7 @@ import { extractTopicFromRange } from "../compression/summarizer.js";
 import { selectStaleRanges } from "../compression/range-selection.js";
 import { appendIndexEntry, getIndexPath } from "../persistence/index-store.js";
 import type { PCNConfig } from "../config.js";
-import type { OmitRange, PruneTarget, SessionState } from "../types.js";
+import type { PruneTarget, SessionState } from "../types.js";
 import { isToolResultMessage } from "../messages.js";
 
 export function refreshRangeIndex(
@@ -42,7 +42,6 @@ export function refreshRangeIndex(
 
   const indexedAt = Date.now();
   const summaryRef = `${stale.startTurn}-${stale.endTurn}`;
-  const offsets = resolveTurnOffsets(state, stale.startTurn, stale.endTurn);
 
   const pruneTargets: PruneTarget[] = toolResults.map((message) => {
     const record = state.toolCalls.get(message.toolCallId);
@@ -71,19 +70,6 @@ export function refreshRangeIndex(
   appendIndexEntry(getIndexPath(projectPath || "default"), entry);
 
   state.pruneTargets.push(...pruneTargets);
-
-  if (offsets) {
-    const range: OmitRange = {
-      startTurn: stale.startTurn,
-      endTurn: stale.endTurn,
-      startOffset: offsets.startOffset,
-      endOffset: offsets.endOffset,
-      indexedAt,
-      summaryRef,
-      messageCount: toolResults.length,
-    };
-    state.omitRanges.push(range);
-  }
 
   return pruneTargets;
 }
