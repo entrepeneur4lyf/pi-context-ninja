@@ -32,20 +32,22 @@ function resetSnapshotStats(){
   keptOutEl.textContent='--';
   turnsEl.textContent='--';
 }
+function applySnapshotStats(d){
+  if(d==null){
+    resetSnapshotStats();
+    return;
+  }
+  sessionIdEl.textContent=typeof d.sessionId==='string'&&d.sessionId.length>0?d.sessionId:'--';
+  contextPctEl.textContent=d.context?.percent!=null?(d.context.percent*100).toFixed(1)+'%':'--%';
+  keptOutEl.textContent=d.totals?.tokensKeptOutApprox!=null?d.totals.tokensKeptOutApprox.toLocaleString():'--';
+  turnsEl.textContent=d.totalTurns!=null?d.totalTurns.toLocaleString():'--';
+}
 source.onmessage=(event)=>{
   const payload=JSON.parse(event.data);
   events.textContent+=payload.type+': '+JSON.stringify(payload.data)+'\\n';
   events.scrollTop=events.scrollHeight;
   if(payload.type==='snapshot'){
-    const d=payload.data;
-    if(d==null){
-      resetSnapshotStats();
-      return;
-    }
-    if(d.sessionId)sessionIdEl.textContent=d.sessionId;
-    if(d.context?.percent!=null)contextPctEl.textContent=(d.context.percent*100).toFixed(1)+'%';
-    if(d.totals?.tokensKeptOutApprox!=null)keptOutEl.textContent=d.totals.tokensKeptOutApprox.toLocaleString();
-    if(d.totalTurns!=null)turnsEl.textContent=d.totalTurns.toLocaleString();
+    applySnapshotStats(payload.data);
   }
 };
 </script></body></html>`;

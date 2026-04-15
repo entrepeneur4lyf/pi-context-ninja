@@ -3,11 +3,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import http from "node:http";
+import vm from "node:vm";
 import { once } from "node:events";
 import { createExtensionRuntime } from "../src/runtime/create-extension-runtime.js";
 import { defaultConfig } from "../src/config.js";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { startDashboardServer } from "../src/dashboard/server.js";
+import { renderDashboardPage } from "../src/dashboard/pages.js";
 
 let tmpDir = "";
 
@@ -36,6 +38,74 @@ async function readSseChunk(reader: ReadableStreamDefaultReader<Uint8Array>, tim
   return new TextDecoder().decode(result.value);
 }
 
+function createDashboardScriptHarness() {
+  const html = renderDashboardPage();
+  const scriptMatch = html.match(/<script>([\s\S]*)<\/script>/);
+  if (!scriptMatch) {
+    throw new Error("expected inline dashboard script");
+  }
+
+  const elements = new Map(
+    [
+      ["events", { textContent: "", scrollTop: 0, scrollHeight: 0 }],
+      ["session-id", { textContent: "--" }],
+      ["ctx-pct", { textContent: "--%" }],
+      ["kept-out", { textContent: "--" }],
+      ["turns", { textContent: "--" }],
+    ].map(([id, element]) => [id, element as { textContent: string; scrollTop?: number; scrollHeight?: number }]),
+  );
+
+  let onmessageHandler: ((event: { data: string }) => void) | null = null;
+
+  const context = {
+    JSON,
+    EventSource: class {
+      constructor(_url: string) {
+        Object.defineProperty(this, "onmessage", {
+          configurable: true,
+          enumerable: true,
+          get() {
+            return onmessageHandler;
+          },
+          set(value: ((event: { data: string }) => void) | null) {
+            onmessageHandler = value;
+          },
+        });
+      }
+    },
+    document: {
+      getElementById(id: string) {
+        const element = elements.get(id);
+        if (!element) {
+          throw new Error(`missing test element: ${id}`);
+        }
+        return element;
+      },
+    },
+  };
+
+  vm.runInNewContext(scriptMatch[1], context);
+
+  if (!onmessageHandler) {
+    throw new Error("expected EventSource onmessage handler");
+  }
+
+  return {
+    dispatchSnapshot(data: unknown) {
+      onmessageHandler?.({
+        data: JSON.stringify({ type: "snapshot", data }),
+      });
+    },
+    getText(id: string) {
+      const element = elements.get(id);
+      if (!element) {
+        throw new Error(`missing test element: ${id}`);
+      }
+      return element.textContent;
+    },
+  };
+}
+
 describe("dashboard server", () => {
   it("serves the dashboard page, broadcasts snapshots, and closes cleanly", async () => {
     const server = startDashboardServer({ port: 0, host: "127.0.0.1" });
@@ -54,10 +124,6 @@ describe("dashboard server", () => {
       expect(html).toContain("Tokens Kept Out");
       expect(html).toContain("Session");
       expect(html).toContain("session-id");
-      expect(html).toContain("d==null");
-      expect(html).toContain("function resetSnapshotStats()");
-      expect(html).toContain("sessionIdEl.textContent='--'");
-      expect(html).toContain("contextPctEl.textContent='--%'");
       expect(html).not.toContain("Tokens Saved");
 
       const response = await fetch(`${baseUrl}/events`);
@@ -251,6 +317,34 @@ describe("dashboard server", () => {
     } finally {
       await server.close();
     }
+  });
+
+  it("resets stale dashboard stat fields when the next snapshot omits them", () => {
+    const page = createDashboardScriptHarness();
+
+    page.dispatchSnapshot({
+      sessionId: "session-a",
+      context: { percent: 0.42 },
+      totals: { tokensKeptOutApprox: 144 },
+      totalTurns: 3,
+    });
+
+    expect(page.getText("session-id")).toBe("session-a");
+    expect(page.getText("ctx-pct")).toBe("42.0%");
+    expect(page.getText("kept-out")).toBe("144");
+    expect(page.getText("turns")).toBe("3");
+
+    page.dispatchSnapshot({
+      sessionId: null,
+      context: { percent: null },
+      totals: { tokensKeptOutApprox: null },
+      totalTurns: null,
+    });
+
+    expect(page.getText("session-id")).toBe("--");
+    expect(page.getText("ctx-pct")).toBe("--%");
+    expect(page.getText("kept-out")).toBe("--");
+    expect(page.getText("turns")).toBe("--");
   });
 });
 
