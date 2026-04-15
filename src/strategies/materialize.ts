@@ -5,6 +5,7 @@ import {
   countToolTextBlocks,
   extractTextContent,
   isToolResultMessage,
+  replaceToolContentWithText,
   replaceSingleToolTextContent,
 } from "../messages.js";
 import { creditSavings } from "../state.js";
@@ -33,86 +34,81 @@ export function materializeContext(
     }
 
     const textBlockCount = countToolTextBlocks(msg);
+    const canRewriteText = textBlockCount === 1;
     const originalText = extractTextContent(msg);
     const toolName = (msg as any).toolName ?? "";
     const toolCallId = (msg as any).toolCallId ?? "";
     const isErr = !!(msg as any).isError;
-
-    if (textBlockCount !== 1) {
-      if (config.strategies.deduplication.enabled) {
-        const fingerprint =
-          (msg as any).__pcnFingerprint ?? `${toolName}::${normalizeContent(originalText)}`;
-        fingerprintDedup(
-          toolCallId,
-          toolName,
-          fingerprint,
-          seen,
-          config.strategies.deduplication.maxOccurrences,
-          config.strategies.deduplication.protectedTools,
-        );
-      }
-
-      return msg;
-    }
-
-    let currentText = originalText;
-    let newText: string | null = null;
+    let dedupText = originalText;
+    let rewriteText: string | null = null;
 
     if (config.strategies.shortCircuit.enabled && !isErr) {
-      const candidate = shortCircuit(currentText, isErr, config.strategies.shortCircuit.minTokens);
+      const candidate = shortCircuit(dedupText, isErr, config.strategies.shortCircuit.minTokens);
       if (candidate !== null) {
-        creditSavings(
-          state,
-          toolCallId,
-          "short_circuit",
-          Math.max(0, currentText.length - candidate.length),
-          Math.max(0, currentText.length - candidate.length),
-        );
-        currentText = candidate;
-        newText = candidate;
+        if (canRewriteText) {
+          creditSavings(
+            state,
+            toolCallId,
+            "short_circuit",
+            Math.max(0, dedupText.length - candidate.length),
+            Math.max(0, dedupText.length - candidate.length),
+          );
+        }
+        dedupText = candidate;
+        if (canRewriteText) {
+          rewriteText = candidate;
+        }
       }
     }
 
     if (config.strategies.codeFilter.enabled && !isErr) {
-      const lang = detectLanguage(currentText);
+      const lang = detectLanguage(dedupText);
       if (lang) {
         const candidate = codeFilter(
-          currentText,
+          dedupText,
           lang,
           config.strategies.codeFilter,
         );
         if (candidate !== null) {
-          creditSavings(
-            state,
-            toolCallId,
-            "code_filter",
-            Math.max(0, currentText.length - candidate.length),
-            Math.max(0, currentText.length - candidate.length),
-          );
-          currentText = candidate;
-          newText = candidate;
+          if (canRewriteText) {
+            creditSavings(
+              state,
+              toolCallId,
+              "code_filter",
+              Math.max(0, dedupText.length - candidate.length),
+              Math.max(0, dedupText.length - candidate.length),
+            );
+          }
+          dedupText = candidate;
+          if (canRewriteText) {
+            rewriteText = candidate;
+          }
         }
       }
     }
 
     if (config.strategies.truncation.enabled) {
-      const candidate = headTailTruncate(currentText, config.strategies.truncation);
+      const candidate = headTailTruncate(dedupText, config.strategies.truncation);
       if (candidate !== null) {
-        creditSavings(
-          state,
-          toolCallId,
-          "truncation",
-          Math.max(0, currentText.length - candidate.length),
-          Math.max(0, currentText.length - candidate.length),
-        );
-        currentText = candidate;
-        newText = candidate;
+        if (canRewriteText) {
+          creditSavings(
+            state,
+            toolCallId,
+            "truncation",
+            Math.max(0, dedupText.length - candidate.length),
+            Math.max(0, dedupText.length - candidate.length),
+          );
+        }
+        dedupText = candidate;
+        if (canRewriteText) {
+          rewriteText = candidate;
+        }
       }
     }
 
     if (config.strategies.deduplication.enabled) {
       const fingerprint =
-        (msg as any).__pcnFingerprint ?? `${toolName}::${normalizeContent(currentText)}`;
+        (msg as any).__pcnFingerprint ?? `${toolName}::${normalizeContent(dedupText)}`;
       const candidate = fingerprintDedup(
         toolCallId,
         toolName,
@@ -126,11 +122,12 @@ export function materializeContext(
           state,
           toolCallId,
           "dedup",
-          Math.max(0, currentText.length - candidate.length),
-          Math.max(0, currentText.length - candidate.length),
+          Math.max(0, dedupText.length - candidate.length),
+          Math.max(0, dedupText.length - candidate.length),
         );
-        currentText = candidate;
-        newText = candidate;
+        if (canRewriteText) {
+          rewriteText = candidate;
+        }
       }
     }
 
@@ -149,16 +146,15 @@ export function materializeContext(
           state,
           toolCallId,
           "error_purge",
-          Math.max(0, currentText.length - candidate.length),
-          Math.max(0, currentText.length - candidate.length),
+          Math.max(0, dedupText.length - candidate.length),
+          Math.max(0, dedupText.length - candidate.length),
         );
-        currentText = candidate;
-        newText = candidate;
+        return replaceToolContentWithText(msg, candidate);
       }
     }
 
-    if (newText !== null) {
-      return replaceSingleToolTextContent(msg, newText);
+    if (rewriteText !== null) {
+      return replaceSingleToolTextContent(msg, rewriteText);
     }
 
     return msg;

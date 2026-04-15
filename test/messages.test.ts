@@ -45,7 +45,7 @@ describe("message helpers", () => {
     expect(textOnly.content[1]).toMatchObject({ type: "image", data: "img-data", mimeType: "image/png" });
   });
 
-  it("replaces all text blocks without dropping later text", () => {
+  it("leaves multi-text results unchanged for string replacement", () => {
     const msg = {
       role: "toolResult",
       content: [
@@ -57,9 +57,9 @@ describe("message helpers", () => {
 
     const textOnly = replaceToolTextContent(msg, "new");
     expect(textOnly.content).toHaveLength(3);
-    expect(textOnly.content[0]).toMatchObject({ type: "text", text: "new" });
+    expect(textOnly.content[0]).toMatchObject({ type: "text", text: "a" });
     expect(textOnly.content[1]).toMatchObject({ type: "image", data: "img-data", mimeType: "image/png" });
-    expect(textOnly.content[2]).toMatchObject({ type: "text", text: "new" });
+    expect(textOnly.content[2]).toMatchObject({ type: "text", text: "b" });
   });
 
   it("keeps replaceToolContent compatibility for string replacement", () => {
@@ -67,6 +67,21 @@ describe("message helpers", () => {
     const replaced = replaceToolContent(msg, "new");
 
     expect((replaced as any).content[0].text).toBe("new");
+  });
+
+  it("leaves multi-text results unchanged through replaceToolContent string compatibility", () => {
+    const msg = {
+      role: "toolResult",
+      content: [
+        { type: "text", text: "a" },
+        { type: "image", data: "img-data", mimeType: "image/png" },
+        { type: "text", text: "b" },
+      ],
+    } as any;
+
+    const replaced = replaceToolContent(msg, "new");
+
+    expect(replaced).toEqual(msg);
   });
 
   it("replaces a single text block without merging surrounding blocks", () => {

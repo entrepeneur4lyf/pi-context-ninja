@@ -168,25 +168,80 @@ describe("materialize", () => {
     expect(toolMsg.content).toEqual(msgs[0].content);
   });
 
-  it("still advances dedup tracking for mixed-content tool results", () => {
+  it("tombstones stale mixed-content error tool results", () => {
     const state = createSessionState("/tmp");
+    state.currentTurn = 10;
+    state.toolCalls.set("t1", {
+      toolCallId: "t1",
+      toolName: "bash",
+      inputArgs: {},
+      inputFingerprint: "bash::{}",
+      isError: true,
+      turnIndex: 2,
+      timestamp: Date.now(),
+      tokenEstimate: 10,
+    });
+
     const cfg = defaultConfig();
-    cfg.strategies.deduplication.maxOccurrences = 1;
+    cfg.strategies.errorPurge.enabled = true;
+    cfg.strategies.errorPurge.maxTurnsAgo = 3;
     cfg.strategies.shortCircuit.enabled = false;
     cfg.strategies.codeFilter.enabled = false;
     cfg.strategies.truncation.enabled = false;
-    cfg.strategies.errorPurge.enabled = false;
+    cfg.strategies.deduplication.enabled = false;
 
-    const mixedPayload = "alpha\nbeta";
     const msgs = [
       {
         role: "toolResult",
         content: [
-          { type: "text", text: "alpha" },
+          { type: "text", text: "error line 1" },
           { type: "image", data: "img-data", mimeType: "image/png" },
-          { type: "text", text: "beta" },
+          { type: "text", text: "error line 2" },
         ],
-        toolName: "read",
+        toolName: "bash",
+        isError: true,
+        toolCallId: "t1",
+        _key: "t1",
+      },
+    ] as any;
+
+    const result = materializeContext(msgs, { state, config: cfg });
+    const toolMsg = result.messages?.[0] as any;
+
+    expect(toolMsg.content).toEqual([
+      {
+        type: "text",
+        text: "[Error output removed -- tool failed more than 3 turns ago]",
+      },
+    ]);
+  });
+
+  it("still advances dedup tracking for mixed-content tool results", () => {
+    const state = createSessionState("/tmp");
+    const cfg = defaultConfig();
+    cfg.strategies.deduplication.maxOccurrences = 1;
+    cfg.strategies.codeFilter.enabled = true;
+    cfg.strategies.codeFilter.maxBodyLines = 1;
+    cfg.strategies.shortCircuit.enabled = false;
+    cfg.strategies.truncation.enabled = false;
+    cfg.strategies.errorPurge.enabled = false;
+
+    const mixedPayload = [
+      "function demo() {",
+      "  const a = 1;",
+      "  const b = 2;",
+      "  return a + b;",
+      "}",
+    ].join("\n");
+    const msgs = [
+      {
+        role: "toolResult",
+        content: [
+          { type: "text", text: "function demo() {" },
+          { type: "image", data: "img-data", mimeType: "image/png" },
+          { type: "text", text: "  const a = 1;\n  const b = 2;\n  return a + b;\n}" },
+        ],
+        toolName: "typescript",
         isError: false,
         toolCallId: "t1",
         _key: "t1",
@@ -194,7 +249,7 @@ describe("materialize", () => {
       {
         role: "toolResult",
         content: [{ type: "text", text: mixedPayload }],
-        toolName: "read",
+        toolName: "typescript",
         isError: false,
         toolCallId: "t2",
         _key: "t2",
@@ -204,7 +259,7 @@ describe("materialize", () => {
     const result = materializeContext(msgs, { state, config: cfg });
 
     expect(result.messages?.[0]).toEqual(msgs[0]);
-    expect((result.messages as any)[1].content[0].text).toBe("[dedup: see earlier read result x1]");
+    expect((result.messages as any)[1].content[0].text).toBe("[dedup: see earlier typescript result x1]");
   });
 
   it("deduplicates normalized content across distinct tool calls", () => {

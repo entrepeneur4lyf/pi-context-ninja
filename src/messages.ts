@@ -48,38 +48,11 @@ export function isError(msg: AgentMessage): boolean {
   return isToolResultMessage(msg) && typeof msg.isError === "boolean" ? msg.isError : false;
 }
 
-function replaceToolTextBlocks(content: ToolResultBlock[], newText: string): ToolResultBlock[] {
-  const next: ToolResultBlock[] = [];
-  for (const block of content) {
-    if (isTextContent(block)) {
-      next.push({ type: "text", text: newText });
-      continue;
-    }
-
-    if (
-      isRecord(block) &&
-      block.type === "image" &&
-      typeof block.data === "string" &&
-      typeof block.mimeType === "string"
-    ) {
-      next.push(block);
-      continue;
-    }
-
-    next.push(block);
-  }
-
-  return next;
-}
-
 /**
- * Replaces the text content inside a tool result while preserving non-text blocks.
+ * Replaces the text content inside a tool result when the result has exactly one text block.
  */
 export function replaceToolTextContent(msg: ToolResultMessage, newText: string): ToolResultMessage {
-  return {
-    ...msg,
-    content: replaceToolTextBlocks(msg.content, newText),
-  };
+  return replaceSingleToolTextContent(msg, newText);
 }
 
 /**
@@ -94,6 +67,17 @@ export function replaceSingleToolTextContent(msg: ToolResultMessage, newText: st
   return {
     ...msg,
     content: msg.content.map((block) => (isTextContent(block) ? { ...block, text: newText } : block)),
+  };
+}
+
+/**
+ * Replaces a tool result with a single text block.
+ * Use this when the semantics intentionally collapse the full tool result, such as tombstoning.
+ */
+export function replaceToolContentWithText(msg: ToolResultMessage, newText: string): ToolResultMessage {
+  return {
+    ...msg,
+    content: [{ type: "text", text: newText }],
   };
 }
 
@@ -121,7 +105,7 @@ export function replaceToolContent(
   }
 
   if (typeof newContent === "string") {
-    return replaceToolTextContent(msg, newContent);
+    return replaceSingleToolTextContent(msg, newContent);
   }
 
   return {
