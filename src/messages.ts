@@ -1,5 +1,5 @@
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { ImageContent, TextContent, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { TextContent, ToolResultMessage } from "@mariozechner/pi-ai";
 
 type ToolResultBlock = ToolResultMessage["content"][number];
 
@@ -45,24 +45,27 @@ export function isError(msg: AgentMessage): boolean {
 }
 
 function replaceToolTextBlocks(content: ToolResultBlock[], newText: string): ToolResultBlock[] {
-  let replaced = false;
-
   const next: ToolResultBlock[] = [];
   for (const block of content) {
-    if (!isTextContent(block)) {
+    if (isTextContent(block)) {
+      next.push({ type: "text", text: newText });
+      continue;
+    }
+
+    if (
+      isRecord(block) &&
+      block.type === "image" &&
+      typeof block.data === "string" &&
+      typeof block.mimeType === "string"
+    ) {
       next.push(block);
       continue;
     }
 
-    if (replaced) {
-      continue;
-    }
-
-    replaced = true;
-    next.push({ type: "text", text: newText });
+    next.push(block);
   }
 
-  return replaced ? next : content;
+  return next;
 }
 
 /**

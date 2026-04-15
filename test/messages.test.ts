@@ -44,6 +44,23 @@ describe("message helpers", () => {
     expect(textOnly.content[1]).toMatchObject({ type: "image", data: "img-data", mimeType: "image/png" });
   });
 
+  it("replaces all text blocks without dropping later text", () => {
+    const msg = {
+      role: "toolResult",
+      content: [
+        { type: "text", text: "a" },
+        { type: "image", data: "img-data", mimeType: "image/png" },
+        { type: "text", text: "b" },
+      ],
+    } as any;
+
+    const textOnly = replaceToolTextContent(msg, "new");
+    expect(textOnly.content).toHaveLength(3);
+    expect(textOnly.content[0]).toMatchObject({ type: "text", text: "new" });
+    expect(textOnly.content[1]).toMatchObject({ type: "image", data: "img-data", mimeType: "image/png" });
+    expect(textOnly.content[2]).toMatchObject({ type: "text", text: "new" });
+  });
+
   it("keeps replaceToolContent compatibility for string replacement", () => {
     const msg = { role: "toolResult", content: [{ type: "text", text: "old" }] } as any;
     const replaced = replaceToolContent(msg, "new");

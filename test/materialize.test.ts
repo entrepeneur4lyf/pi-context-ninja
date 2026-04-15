@@ -92,4 +92,38 @@ describe("materialize", () => {
     expect(toolMsg.content[0]).toMatchObject({ type: "text", text: "[ok]" });
     expect(toolMsg.content[1]).toMatchObject({ type: "image", data: "img-data", mimeType: "image/png" });
   });
+
+  it("preserves later text blocks when rewriting mixed tool results", () => {
+    const state = createSessionState("/tmp");
+    const cfg = defaultConfig();
+    cfg.strategies.truncation.headLines = 1;
+    cfg.strategies.truncation.tailLines = 1;
+    cfg.strategies.truncation.minLines = 2;
+    cfg.strategies.truncation.enabled = true;
+
+    const msgs = [
+      {
+        role: "toolResult",
+        content: [
+          { type: "text", text: "alpha\nbeta" },
+          { type: "image", data: "img-data", mimeType: "image/png" },
+          { type: "text", text: "gamma\ndelta" },
+        ],
+        toolName: "bash",
+        isError: false,
+        toolCallId: "t1",
+        _key: "t1",
+      },
+    ] as any;
+
+    const result = materializeContext(msgs, { state, config: cfg });
+    const toolMsg = result.messages?.[0] as any;
+
+    expect(toolMsg.content).toHaveLength(3);
+    expect(toolMsg.content[0]).toMatchObject({ type: "text" });
+    expect(toolMsg.content[1]).toMatchObject({ type: "image", data: "img-data", mimeType: "image/png" });
+    expect(toolMsg.content[2]).toMatchObject({ type: "text" });
+    expect(toolMsg.content[0].text).toBe(toolMsg.content[2].text);
+    expect(toolMsg.content[0].text).toContain("[--- 2 lines omitted ---]");
+  });
 });
