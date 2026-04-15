@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { applyPruneTargets } from "../src/strategies/pruning";
+import { createSessionState } from "../src/state";
 
 describe("pruning", () => {
+  const longBody = "very long file body ".repeat(10);
+
   it("rewrites only targeted tool results and preserves conversation messages", () => {
     const messages = [
       { role: "user", content: [{ type: "text", text: "need file status" }] },
@@ -11,7 +14,7 @@ describe("pruning", () => {
         toolCallId: "read-1",
         toolName: "read",
         isError: false,
-        content: [{ type: "text", text: "very long file body" }],
+        content: [{ type: "text", text: longBody }],
       },
     ] as any;
 
@@ -58,7 +61,7 @@ describe("pruning", () => {
         isError: false,
         content: [
           { type: "image", data: "img-data", mimeType: "image/png" },
-          { type: "text", text: "very long file body" },
+          { type: "text", text: longBody },
         ],
       },
     ] as any;
@@ -113,5 +116,38 @@ describe("pruning", () => {
     expect((result[0] as any).role).toBe("user");
     expect((result[1] as any).role).toBe("assistant");
     expect(result).toEqual(messages);
+  });
+
+  it("leaves already-shortened tool results unchanged when the prune tombstone would expand them", () => {
+    const state = createSessionState("project");
+    const messages = [
+      {
+        role: "toolResult",
+        toolCallId: "read-1",
+        toolName: "read",
+        isError: false,
+        content: [{ type: "text", text: "[ok]" }],
+      },
+    ] as any;
+
+    const result = applyPruneTargets(
+      messages,
+      [
+        {
+          toolCallId: "read-1",
+          turnIndex: 1,
+          indexedAt: 123,
+          summaryRef: "0-8",
+          replacementText: "[pruned: indexed read result 0-8]",
+        },
+      ],
+      state,
+    );
+
+    expect(result).toEqual(messages);
+    expect(state.tokensSavedByType.background_index ?? 0).toBe(0);
+    expect(state.tokensKeptOutByType.background_index ?? 0).toBe(0);
+    expect(state.tokensSaved).toBe(0);
+    expect(state.tokensKeptOutTotal).toBe(0);
   });
 });

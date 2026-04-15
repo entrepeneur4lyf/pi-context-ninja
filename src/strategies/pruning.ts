@@ -38,8 +38,13 @@ export function applyPruneTargets(
       return message;
     }
 
+    const currentText = extractTextContent(message);
+    if (currentText.length <= replacementText.length) {
+      return message;
+    }
+
     if (state) {
-      const omittedLength = Math.max(0, extractTextContent(message).length - replacementText.length);
+      const omittedLength = currentText.length - replacementText.length;
       creditSavings(state, toolCallId, "background_index", omittedLength, omittedLength);
     }
 
