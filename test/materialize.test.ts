@@ -168,6 +168,45 @@ describe("materialize", () => {
     expect(toolMsg.content).toEqual(msgs[0].content);
   });
 
+  it("still advances dedup tracking for mixed-content tool results", () => {
+    const state = createSessionState("/tmp");
+    const cfg = defaultConfig();
+    cfg.strategies.deduplication.maxOccurrences = 1;
+    cfg.strategies.shortCircuit.enabled = false;
+    cfg.strategies.codeFilter.enabled = false;
+    cfg.strategies.truncation.enabled = false;
+    cfg.strategies.errorPurge.enabled = false;
+
+    const mixedPayload = "alpha\nbeta";
+    const msgs = [
+      {
+        role: "toolResult",
+        content: [
+          { type: "text", text: "alpha" },
+          { type: "image", data: "img-data", mimeType: "image/png" },
+          { type: "text", text: "beta" },
+        ],
+        toolName: "read",
+        isError: false,
+        toolCallId: "t1",
+        _key: "t1",
+      },
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: mixedPayload }],
+        toolName: "read",
+        isError: false,
+        toolCallId: "t2",
+        _key: "t2",
+      },
+    ] as any;
+
+    const result = materializeContext(msgs, { state, config: cfg });
+
+    expect(result.messages?.[0]).toEqual(msgs[0]);
+    expect((result.messages as any)[1].content[0].text).toBe("[dedup: see earlier read result x1]");
+  });
+
   it("deduplicates normalized content across distinct tool calls", () => {
     const state = createSessionState("/tmp");
     const cfg = defaultConfig();

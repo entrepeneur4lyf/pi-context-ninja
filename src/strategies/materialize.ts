@@ -32,14 +32,28 @@ export function materializeContext(
       return msg;
     }
 
-    if (countToolTextBlocks(msg) !== 1) {
-      return msg;
-    }
-
+    const textBlockCount = countToolTextBlocks(msg);
     const originalText = extractTextContent(msg);
     const toolName = (msg as any).toolName ?? "";
     const toolCallId = (msg as any).toolCallId ?? "";
     const isErr = !!(msg as any).isError;
+
+    if (textBlockCount !== 1) {
+      if (config.strategies.deduplication.enabled) {
+        const fingerprint =
+          (msg as any).__pcnFingerprint ?? `${toolName}::${normalizeContent(originalText)}`;
+        fingerprintDedup(
+          toolCallId,
+          toolName,
+          fingerprint,
+          seen,
+          config.strategies.deduplication.maxOccurrences,
+          config.strategies.deduplication.protectedTools,
+        );
+      }
+
+      return msg;
+    }
 
     let currentText = originalText;
     let newText: string | null = null;
