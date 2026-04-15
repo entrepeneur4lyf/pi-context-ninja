@@ -6,9 +6,16 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest --run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm test"
+  },
+  "engines": {
+    "node": ">=20.6.0"
   },
   "dependencies": {
+    "@mariozechner/pi-agent-core": "0.67.2",
+    "@mariozechner/pi-ai": "0.67.2",
+    "@mariozechner/pi-coding-agent": "0.67.2",
     "better-sqlite3": "^11.0.0",
     "yaml": "^2.7.0"
   },
