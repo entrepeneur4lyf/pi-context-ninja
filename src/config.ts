@@ -1,4 +1,6 @@
 import fs from "fs";
+import os from "node:os";
+import path from "node:path";
 import YAML from "yaml";
 
 export interface ShortCircuitConfig {
@@ -139,23 +141,19 @@ export function defaultConfig(): PCNConfig {
   };
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
 function deepMerge(target: Record<string, unknown>, source: Record<string, unknown>): Record<string, unknown> {
-  const result = { ...target };
+  const result: Record<string, unknown> = { ...target };
   for (const key of Object.keys(source)) {
-    if (
-      source[key] &&
-      typeof source[key] === "object" &&
-      !Array.isArray(source[key]) &&
-      target[key] &&
-      typeof target[key] === "object" &&
-      !Array.isArray(target[key])
-    ) {
-      result[key] = deepMerge(
-        target[key] as Record<string, unknown>,
-        source[key] as Record<string, unknown>,
-      );
+    const sourceValue = source[key];
+    const targetValue = target[key];
+    if (isPlainObject(sourceValue) && isPlainObject(targetValue)) {
+      result[key] = deepMerge(targetValue, sourceValue);
     } else {
-      result[key] = source[key];
+      result[key] = sourceValue;
     }
   }
   return result;
@@ -170,7 +168,12 @@ export function loadConfig(configPath: string): PCNConfig {
 
   const raw = fs.readFileSync(configPath, "utf-8");
   const parsed = YAML.parse(raw) as Record<string, unknown>;
-  return deepMerge(defaults as Record<string, unknown>, parsed) as PCNConfig;
+  return deepMerge(defaults as unknown as Record<string, unknown>, parsed) as unknown as PCNConfig;
+}
+
+export function loadRuntimeConfig(): PCNConfig {
+  const configPath = process.env.PCN_CONFIG_PATH ?? path.join(os.homedir(), ".pi-ninja", "config.yaml");
+  return loadConfig(configPath);
 }
 
 export { deepMerge };
