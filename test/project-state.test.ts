@@ -73,6 +73,31 @@ describe("project control state", () => {
     expect(readProjectControlState(projectDir).dashboardEnabled).toBe(true);
   });
 
+  it("treats equivalent project path variants as the same control directory", () => {
+    const projectDir = makeProjectDir();
+    const projectDirWithTrailingSlash = `${projectDir}${path.sep}`;
+
+    disableProject(projectDirWithTrailingSlash);
+    disableProjectDashboard(projectDirWithTrailingSlash);
+
+    expect(resolveProjectControlDir(projectDirWithTrailingSlash)).toBe(resolveProjectControlDir(projectDir));
+    expect(readProjectControlState(projectDir)).toMatchObject({
+      projectPath: projectDir,
+      enabled: false,
+      dashboardEnabled: false,
+    });
+    expect(isProjectEnabled(projectDir)).toBe(false);
+    expect(isProjectDashboardEnabled(projectDir)).toBe(false);
+
+    enableProject(projectDir);
+    enableProjectDashboard(projectDir);
+    expect(readProjectControlState(projectDirWithTrailingSlash)).toMatchObject({
+      projectPath: projectDir,
+      enabled: true,
+      dashboardEnabled: true,
+    });
+  });
+
   it("rejects blank project paths", () => {
     for (const projectPath of ["", " ", "\n\t "]) {
       expect(() => resolveProjectControlDir(projectPath)).toThrow("Project path must be a non-blank string.");

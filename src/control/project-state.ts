@@ -22,8 +22,12 @@ function requireProjectPath(projectPath: string): string {
   return projectPath;
 }
 
+export function normalizeProjectPath(projectPath: string): string {
+  return path.resolve(requireProjectPath(projectPath));
+}
+
 export function resolveProjectControlDir(projectPath: string): string {
-  return path.join(requireProjectPath(projectPath), ...CONTROL_DIR_PARTS);
+  return path.join(normalizeProjectPath(projectPath), ...CONTROL_DIR_PARTS);
 }
 
 export function ensureProjectControlDir(projectPath: string): string {
@@ -33,12 +37,13 @@ export function ensureProjectControlDir(projectPath: string): string {
 }
 
 export function readProjectControlState(projectPath: string): ProjectControlState {
+  const normalizedProjectPath = normalizeProjectPath(projectPath);
   const controlDir = resolveProjectControlDir(projectPath);
   const disabledMarkerPath = path.join(controlDir, DISABLED_MARKER);
   const dashboardDisabledMarkerPath = path.join(controlDir, DASHBOARD_DISABLED_MARKER);
 
   return {
-    projectPath,
+    projectPath: normalizedProjectPath,
     controlDir,
     enabled: !fs.existsSync(disabledMarkerPath),
     dashboardEnabled: !fs.existsSync(dashboardDisabledMarkerPath),

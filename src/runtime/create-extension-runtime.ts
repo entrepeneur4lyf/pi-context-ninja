@@ -24,6 +24,7 @@ import {
 } from "../messages.js";
 import { applySafeToolTextShaping } from "../strategies/safe-shaping.js";
 import { isProjectDashboardEnabled, isProjectEnabled } from "../control/runtime-gate.js";
+import { normalizeProjectPath } from "../control/project-state.js";
 
 const sessionMap = new Map<string, SessionState>();
 const analyticsStoresBySession = new Map<string, AnalyticsStore>();
@@ -50,18 +51,21 @@ export interface ExtensionRuntimeControls {
 }
 
 function getState(sessionId: string, projectPath?: string): SessionState {
+  const normalizedProjectPath = typeof projectPath === "string" && projectPath.length > 0
+    ? normalizeProjectPath(projectPath)
+    : undefined;
   let state = sessionMap.get(sessionId);
   if (!state) {
     const persisted = loadSessionState(sessionId);
     if (persisted) {
       state = hydrateSessionState(persisted);
     } else {
-      state = createSessionState(projectPath ?? sessionId);
+      state = createSessionState(normalizedProjectPath ?? sessionId);
     }
     sessionMap.set(sessionId, state);
   }
-  if (typeof projectPath === "string" && projectPath.length > 0 && state.projectPath !== projectPath) {
-    state.projectPath = projectPath;
+  if (typeof normalizedProjectPath === "string" && state.projectPath !== normalizedProjectPath) {
+    state.projectPath = normalizedProjectPath;
   }
   return state;
 }
@@ -416,10 +420,11 @@ async function revokeProjectDashboardSessions(
   projectPath: string,
   runtimeHealth?: CommandRuntimeHealth,
 ): Promise<void> {
+  const normalizedProjectPath = normalizeProjectPath(projectPath);
   const sessionIds = [...dashboardRuntime.activeSessions];
   for (const sessionId of sessionIds) {
     const state = sessionMap.get(sessionId);
-    if (state?.projectPath !== projectPath) {
+    if (state?.projectPath !== normalizedProjectPath) {
       continue;
     }
 

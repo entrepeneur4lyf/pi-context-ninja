@@ -7,6 +7,7 @@ import {
   disableProjectDashboard,
   enableProject,
   enableProjectDashboard,
+  normalizeProjectPath,
   readProjectControlState,
 } from "./project-state.js";
 import { buildProjectStatus } from "./status.js";
@@ -75,7 +76,7 @@ function requireProjectPath(ctx: ExtensionCommandContext): string | null {
     return null;
   }
 
-  return ctx.cwd;
+  return normalizeProjectPath(ctx.cwd);
 }
 
 async function revokeProjectDashboardSessions(
