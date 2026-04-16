@@ -240,6 +240,67 @@ function getAnalyticsStore(sessionId: string, state: SessionState, config: PCNCo
   return store;
 }
 
+function evictAnalyticsStore(sessionId: string): void {
+  const store = analyticsStoresBySession.get(sessionId);
+  if (!store) {
+    return;
+  }
+
+  analyticsStoresBySession.delete(sessionId);
+
+  try {
+    store.close();
+  } catch {
+    // Treat broken analytics stores as disposable; core runtime state must survive.
+  }
+}
+
+async function recordTurnAnalyticsSafely(
+  sessionId: string,
+  state: SessionState,
+  config: PCNConfig,
+  turn: {
+    turnIndex: number;
+    toolCount: number;
+    messageCountAfterTurn: number;
+    timestamp: number;
+    tokensSavedApprox: number;
+    tokensKeptOutApprox: number;
+  },
+): Promise<void> {
+  if (!config.analytics.enabled) {
+    return;
+  }
+
+  try {
+    const analyticsStore = getAnalyticsStore(sessionId, state, config);
+    const snapshot = analyticsStore?.recordTurn({
+      sessionId,
+      projectPath: state.projectPath,
+      turnIndex: turn.turnIndex,
+      toolCount: turn.toolCount,
+      messageCountAfterTurn: turn.messageCountAfterTurn,
+      timestamp: turn.timestamp,
+      contextTokens: state.lastContextTokens,
+      contextPercent: state.lastContextPercent,
+      contextWindow: state.lastContextWindow,
+      tokensSavedApprox: turn.tokensSavedApprox,
+      tokensKeptOutApprox: turn.tokensKeptOutApprox,
+    });
+
+    if (!snapshot) {
+      return;
+    }
+
+    const dashboardServer = await ensureDashboardServer(sessionId, config);
+    if (dashboardServer) {
+      dashboardServer.publish(sessionId, snapshot);
+    }
+  } catch {
+    evictAnalyticsStore(sessionId);
+  }
+}
+
 async function ensureDashboardServer(sessionId: string, config: PCNConfig): Promise<DashboardServerHandle | null> {
   if (!config.dashboard.enabled) {
     return null;
@@ -280,11 +341,7 @@ async function ensureDashboardServer(sessionId: string, config: PCNConfig): Prom
 }
 
 async function releaseSessionResources(sessionId: string): Promise<void> {
-  const store = analyticsStoresBySession.get(sessionId);
-  if (store) {
-    store.close();
-    analyticsStoresBySession.delete(sessionId);
-  }
+  evictAnalyticsStore(sessionId);
 
   if (dashboardRuntime.handle) {
     dashboardRuntime.handle.clearSession(sessionId);
@@ -380,31 +437,20 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
 
     state.currentTurn = typeof event.turnIndex === "number" ? event.turnIndex + 1 : state.currentTurn + 1;
     const latestTurn = state.turnHistory.at(-1);
-    if (latestTurn) {
-      const analyticsStore = getAnalyticsStore(sessionId, state, config);
-      const snapshot = analyticsStore?.recordTurn({
-        sessionId,
-        projectPath: state.projectPath,
-        turnIndex: latestTurn.turnIndex,
-        toolCount: latestTurn.toolCount,
-        messageCountAfterTurn: latestTurn.messageCountAfterTurn,
-        timestamp: latestTurn.timestamp,
-        contextTokens: state.lastContextTokens,
-        contextPercent: state.lastContextPercent,
-        contextWindow: state.lastContextWindow,
-        tokensSavedApprox: latestTurn.tokensSavedDelta,
-        tokensKeptOutApprox: latestTurn.tokensKeptOutDelta,
-      });
-
-      if (snapshot) {
-        const dashboardServer = await ensureDashboardServer(sessionId, config);
-        if (dashboardServer) {
-          dashboardServer.publish(sessionId, snapshot);
-        }
+    try {
+      if (latestTurn) {
+        await recordTurnAnalyticsSafely(sessionId, state, config, {
+          turnIndex: latestTurn.turnIndex,
+          toolCount: latestTurn.toolCount,
+          messageCountAfterTurn: latestTurn.messageCountAfterTurn,
+          timestamp: latestTurn.timestamp,
+          tokensSavedApprox: latestTurn.tokensSavedDelta,
+          tokensKeptOutApprox: latestTurn.tokensKeptOutDelta,
+        });
       }
+    } finally {
+      persistState(sessionId);
     }
-
-    persistState(sessionId);
   });
 
   pi.on("before_agent_start", (event, ctx) => {

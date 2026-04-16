@@ -982,6 +982,108 @@ describe("runtime hook registration", () => {
     });
   });
 
+  it("isolates analytics recordTurn failures from turn persistence and evicts the broken session store", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = true;
+    config.analytics.dbPath = path.join(stateDir, "analytics.sqlite");
+    config.dashboard.enabled = false;
+
+    const brokenStore = {
+      recordTurn: vi.fn(() => {
+        throw new Error("analytics write failed");
+      }),
+      getSnapshot: vi.fn(),
+      close: vi.fn(),
+    };
+    const healthySnapshot = {
+      generatedAt: Date.now(),
+      sessionId: "session-analytics-failure",
+      projectPath: "/tmp/project",
+      totalTurns: 1,
+      totals: {
+        tokensSavedApprox: 0,
+        tokensKeptOutApprox: 0,
+      },
+      context: {
+        tokens: 420,
+        percent: 0.42,
+        window: 1000,
+      },
+      latestTurn: null,
+      recentTurns: [],
+    };
+    const healthyStore = {
+      recordTurn: vi.fn(() => healthySnapshot),
+      getSnapshot: vi.fn(() => healthySnapshot),
+      close: vi.fn(),
+    };
+    const createAnalyticsStoreMock = vi
+      .fn()
+      .mockReturnValueOnce(brokenStore)
+      .mockReturnValueOnce(healthyStore);
+
+    vi.resetModules();
+    vi.doMock("../src/analytics/store.js", () => ({
+      createAnalyticsStore: createAnalyticsStoreMock,
+    }));
+
+    try {
+      const { createExtensionRuntime: createRuntimeWithMockedAnalytics } = await import(
+        "../src/runtime/create-extension-runtime.js"
+      );
+
+      const { calls, pi } = createPiMock();
+      createRuntimeWithMockedAnalytics(pi, config);
+
+      const ctx = createContext("session-analytics-failure");
+
+      await expect(
+        calls.get("turn_end")?.(
+          {
+            turnIndex: 0,
+            message: { role: "assistant", content: "first turn" },
+            toolResults: [],
+          },
+          ctx,
+        ),
+      ).resolves.toBeUndefined();
+
+      const { loadSessionState } = await loadStateStore();
+      let persisted = loadSessionState("session-analytics-failure");
+      expect(persisted).not.toBeNull();
+      expect(persisted?.currentTurn).toBe(1);
+      expect(persisted?.turnHistory).toHaveLength(1);
+      expect(persisted?.turnHistory[0]).toMatchObject({
+        turnIndex: 0,
+        messageCountAfterTurn: 3,
+      });
+      expect(createAnalyticsStoreMock).toHaveBeenCalledTimes(1);
+      expect(brokenStore.recordTurn).toHaveBeenCalledTimes(1);
+      expect(brokenStore.close).toHaveBeenCalledTimes(1);
+
+      await expect(
+        calls.get("turn_end")?.(
+          {
+            turnIndex: 1,
+            message: { role: "assistant", content: "second turn" },
+            toolResults: [],
+          },
+          ctx,
+        ),
+      ).resolves.toBeUndefined();
+
+      persisted = loadSessionState("session-analytics-failure");
+      expect(persisted?.currentTurn).toBe(2);
+      expect(persisted?.turnHistory).toHaveLength(2);
+      expect(createAnalyticsStoreMock).toHaveBeenCalledTimes(2);
+      expect(healthyStore.recordTurn).toHaveBeenCalledTimes(1);
+      expect(healthyStore.close).not.toHaveBeenCalled();
+    } finally {
+      vi.doUnmock("../src/analytics/store.js");
+      vi.resetModules();
+    }
+  });
+
   it("backfills first-observed tool turn indices from turn_end so resumed sessions do not age fresh results as stale", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;
