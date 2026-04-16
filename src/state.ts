@@ -306,18 +306,18 @@ function isPersistedSessionStateRoot(value: unknown): value is Record<string, un
 }
 
 function hasSharedPersistedSessionStateFields(value: Record<string, unknown>): boolean {
-  return isFiniteNumber(value.lastIndexedTurn)
-    && isFiniteNumber(value.tokensKeptOutTotal)
-    && isFiniteNumber(value.tokensSaved)
-    && isRecord(value.tokensKeptOutByType)
-    && isRecord(value.tokensSavedByType)
-    && isFiniteNumber(value.currentTurn)
+  return isFiniteNumber(value.currentTurn)
     && Array.isArray(value.turnHistory)
     && typeof value.projectPath === "string";
 }
 
 function hasOptionalPersistedSessionStateCompatFields(value: Record<string, unknown>): boolean {
   return isOptionalArray(value.omitRanges)
+    && isOptionalFiniteNumber(value.lastIndexedTurn)
+    && isOptionalFiniteNumber(value.tokensKeptOutTotal)
+    && isOptionalFiniteNumber(value.tokensSaved)
+    && isOptionalRecord(value.tokensKeptOutByType)
+    && isOptionalRecord(value.tokensSavedByType)
     && isOptionalArray(value.toolCalls)
     && isOptionalArray(value.prunedToolIds)
     && isOptionalArray(value.pruneTargets)
@@ -332,8 +332,16 @@ function isOptionalArray(value: unknown): boolean {
   return value === undefined || Array.isArray(value);
 }
 
+function isOptionalRecord(value: unknown): boolean {
+  return value === undefined || isRecord(value);
+}
+
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function isOptionalFiniteNumber(value: unknown): boolean {
+  return value === undefined || isFiniteNumber(value);
 }
 
 function isNullableFiniteNumber(value: unknown): value is number | null {

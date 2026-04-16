@@ -148,6 +148,48 @@ describe("state store", () => {
     expect(quarantined).toHaveLength(1);
   });
 
+  it("loads older persisted session shapes with defaults instead of quarantining them", async () => {
+    const { loadSessionState, getStatePath } = await loadStateStore();
+    const statePath = getStatePath("older-shape");
+
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        currentTurn: 3,
+        tokensKeptOutTotal: 17,
+        tokensSaved: 19,
+        tokensKeptOutByType: { dedup: 17 },
+        tokensSavedByType: { dedup: 19 },
+        turnHistory: [
+          {
+            turnIndex: 2,
+            toolCount: 1,
+            messageCountAfterTurn: 4,
+            tokensKeptOutDelta: 17,
+            tokensSavedDelta: 19,
+            timestamp: 111,
+          },
+        ],
+        projectPath: "/tmp/legacy-project",
+      }),
+      "utf8",
+    );
+
+    expect(() => loadSessionState("older-shape")).not.toThrow();
+    const loaded = loadSessionState("older-shape");
+
+    expect(loaded).not.toBeNull();
+    expect(loaded?.currentTurn).toBe(3);
+    expect(loaded?.projectPath).toBe("/tmp/legacy-project");
+    expect(loaded?.lastIndexedTurn).toBe(-1);
+    expect(loaded?.systemHintState).toEqual({
+      appliedOnce: false,
+      lastAppliedText: null,
+    });
+    expect(fs.existsSync(statePath)).toBe(true);
+    expect(fs.readdirSync(stateDir).some((entry) => entry.startsWith("older-shape.json.corrupt."))).toBe(false);
+  });
+
   it("writes atomically without leaving a tmp file behind", async () => {
     const { saveSessionState, getStatePath } = await loadStateStore();
     const s = createSessionState("/tmp");
