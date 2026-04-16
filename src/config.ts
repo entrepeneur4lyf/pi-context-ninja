@@ -176,9 +176,12 @@ export function loadConfig(configPath: string): PCNConfig {
   return deepMerge(asPlainObject(defaults), parsed);
 }
 
+export function resolveRuntimeConfigPath(): string {
+  return process.env.PCN_CONFIG_PATH ?? path.join(os.homedir(), ".pi-ninja", "config.yaml");
+}
+
 export function loadRuntimeConfig(): PCNConfig {
-  const configPath = process.env.PCN_CONFIG_PATH ?? path.join(os.homedir(), ".pi-ninja", "config.yaml");
-  return loadConfig(configPath);
+  return loadConfig(resolveRuntimeConfigPath());
 }
 
 export { deepMerge };
