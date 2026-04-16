@@ -1,4 +1,3 @@
-import type { PCNConfig } from "../config.js";
 import { buildProjectStatus, type ProjectStatus } from "./status.js";
 
 export interface ProjectDoctorReport {
@@ -8,7 +7,6 @@ export interface ProjectDoctorReport {
 
 export function buildProjectDoctorReport(input: {
   projectPath: string;
-  config: PCNConfig;
   configPath: string;
   runtimeLoaded: boolean;
   degradedReasons: string[];
@@ -18,10 +16,6 @@ export function buildProjectDoctorReport(input: {
 
   if (!status.enabled) {
     findings.push("Extension runtime is disabled for this project.");
-  }
-
-  if (!status.dashboardEnabled) {
-    findings.push("Dashboard publishing is disabled for this project.");
   }
 
   if (!status.runtimeLoaded) {

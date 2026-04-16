@@ -2,7 +2,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { defaultConfig } from "../src/config.js";
 import { disableProject, disableProjectDashboard } from "../src/control/project-state.js";
 import { buildProjectDoctorReport } from "../src/control/doctor.js";
 import { exportProjectDoctorReport } from "../src/control/export.js";
@@ -15,7 +14,6 @@ describe("project control reporting", () => {
 
     const status = buildProjectStatus({
       projectPath: projectDir,
-      config: defaultConfig(),
       configPath,
       runtimeLoaded: true,
       degradedReasons: [],
@@ -28,14 +26,28 @@ describe("project control reporting", () => {
     expect(status.configPath).toBe(configPath);
   });
 
-  it("marks disabled and degraded states in the doctor report", () => {
+  it("treats dashboard opt-out as healthy when runtime is otherwise fine", () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-control-status-"));
-    disableProject(projectDir);
     disableProjectDashboard(projectDir);
 
     const report = buildProjectDoctorReport({
       projectPath: projectDir,
-      config: defaultConfig(),
+      configPath: "/tmp/config.yaml",
+      runtimeLoaded: true,
+      degradedReasons: [],
+    });
+
+    expect(report.status.mode).toBe("full");
+    expect(report.status.dashboardEnabled).toBe(false);
+    expect(report.findings).toEqual(["No compatibility or runtime degradation detected."]);
+  });
+
+  it("marks disabled and degraded states in the doctor report", () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-control-status-"));
+    disableProject(projectDir);
+
+    const report = buildProjectDoctorReport({
+      projectPath: projectDir,
       configPath: "/tmp/config.yaml",
       runtimeLoaded: true,
       degradedReasons: ["dashboard startup failed"],
@@ -43,7 +55,6 @@ describe("project control reporting", () => {
 
     expect(report.status.mode).toBe("disabled");
     expect(report.findings).toContain("Extension runtime is disabled for this project.");
-    expect(report.findings).toContain("Dashboard publishing is disabled for this project.");
     expect(report.findings).toContain("dashboard startup failed");
   });
 
@@ -53,7 +64,6 @@ describe("project control reporting", () => {
       projectPath: projectDir,
       report: buildProjectDoctorReport({
         projectPath: projectDir,
-        config: defaultConfig(),
         configPath: "/tmp/config.yaml",
         runtimeLoaded: true,
         degradedReasons: [],

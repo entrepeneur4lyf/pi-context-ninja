@@ -1,4 +1,3 @@
-import type { PCNConfig } from "../config.js";
 import { readProjectControlState } from "./project-state.js";
 
 export interface ProjectStatus {
@@ -14,7 +13,6 @@ export interface ProjectStatus {
 
 export function buildProjectStatus(input: {
   projectPath: string;
-  config: PCNConfig;
   configPath: string;
   runtimeLoaded: boolean;
   degradedReasons: string[];
