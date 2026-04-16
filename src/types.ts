@@ -14,6 +14,7 @@ export interface ToolRecord {
   turnIndex: number;
   timestamp: number;
   tokenEstimate: number;
+  inferredFromContext?: boolean;
   shapedContent?: (TextContent | ImageContent)[];
 }
 

@@ -1085,7 +1085,7 @@ describe("runtime hook registration", () => {
     expect(readIndexEntries(getIndexPath("/tmp/project"))).toEqual([]);
   });
 
-  it("rebuilds missing tool records from context messages using a freshness-biased turn so historical sessions do not age fresh results as stale", async () => {
+  it("rebuilds missing tool records from context messages using a freshness-biased turn until later turn_end makes the authoritative age apply", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;
     config.dashboard.enabled = false;
@@ -1108,24 +1108,16 @@ describe("runtime hook registration", () => {
       tokensSaved: 0,
       tokensKeptOutByType: {},
       tokensSavedByType: {},
-      currentTurn: 9,
+      currentTurn: 20,
       countedSavingsIds: [],
       turnHistory: [
         {
-          turnIndex: 0,
+          turnIndex: 20,
           toolCount: 1,
           messageCountAfterTurn: 3,
           tokensKeptOutDelta: 0,
           tokensSavedDelta: 0,
           timestamp: 111,
-        },
-        {
-          turnIndex: 9,
-          toolCount: 0,
-          messageCountAfterTurn: 9,
-          tokensKeptOutDelta: 0,
-          tokensSavedDelta: 0,
-          timestamp: 222,
         },
       ],
       projectPath: "/tmp/project",
@@ -1187,14 +1179,14 @@ describe("runtime hook registration", () => {
     );
 
     const { loadSessionState } = await loadStateStore();
-    const persisted = loadSessionState(sessionId);
+    let persisted = loadSessionState(sessionId);
     expect(persisted?.toolCalls).toEqual([
       [
         "historic-error",
         expect.objectContaining({
           toolName: "read",
           isError: true,
-          turnIndex: 8,
+          turnIndex: 19,
         }),
       ],
       [
@@ -1202,12 +1194,122 @@ describe("runtime hook registration", () => {
         expect.objectContaining({
           toolName: "read",
           isError: false,
-          turnIndex: 8,
+          turnIndex: 19,
         }),
       ],
     ]);
     expect(persisted?.pruneTargets).toEqual([]);
     expect(readIndexEntries(getIndexPath("/tmp/project"))).toHaveLength(0);
+
+    await calls.get("turn_end")?.(
+      {
+        turnIndex: 12,
+        message: { role: "assistant", content: "late authoritative turn" },
+        toolResults: [
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "boom" }],
+            toolName: "read",
+            isError: true,
+            toolCallId: "historic-error",
+          },
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "archived output" }],
+            toolName: "read",
+            isError: false,
+            toolCallId: "historic-success",
+          },
+        ],
+      },
+      ctx,
+    );
+
+    persisted = loadSessionState(sessionId);
+    expect(persisted?.toolCalls).toEqual([
+      [
+        "historic-error",
+        expect.objectContaining({
+          turnIndex: 12,
+        }),
+      ],
+      [
+        "historic-success",
+        expect.objectContaining({
+          turnIndex: 12,
+        }),
+      ],
+    ]);
+
+    await calls.get("turn_end")?.(
+      { turnIndex: 13, message: { role: "assistant", content: "noop" }, toolResults: [] },
+      ctx,
+    );
+    await calls.get("turn_end")?.(
+      { turnIndex: 14, message: { role: "assistant", content: "noop" }, toolResults: [] },
+      ctx,
+    );
+    await calls.get("turn_end")?.(
+      { turnIndex: 15, message: { role: "assistant", content: "noop" }, toolResults: [] },
+      ctx,
+    );
+    await calls.get("turn_end")?.(
+      { turnIndex: 16, message: { role: "assistant", content: "noop" }, toolResults: [] },
+      ctx,
+    );
+
+    const purgedContext = await calls.get("context")?.(
+      {
+        messages: [
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "boom" }],
+            toolName: "read",
+            isError: true,
+            toolCallId: "historic-error",
+          },
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "archived output" }],
+            toolName: "read",
+            isError: false,
+            toolCallId: "historic-success",
+          },
+        ],
+      },
+      ctx,
+    ) as { messages?: Array<{ content: Array<{ type: string; text?: string }> }> } | undefined;
+
+    expect(purgedContext?.messages?.[0]?.content).toEqual([
+      {
+        type: "text",
+        text: `[Error output removed -- tool failed more than ${config.strategies.errorPurge.maxTurnsAgo} turns ago]`,
+      },
+    ]);
+
+    await calls.get("agent_end")?.(
+      {
+        messages: [
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "boom" }],
+            toolName: "read",
+            isError: true,
+            toolCallId: "historic-error",
+          },
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "archived output" }],
+            toolName: "read",
+            isError: false,
+            toolCallId: "historic-success",
+          },
+        ],
+      },
+      ctx,
+    );
+
+    expect(readIndexEntries(getIndexPath("/tmp/project"))).toHaveLength(1);
   });
 
   it("uses the newest historical turn when currentTurn is missing and still rebuilds tool records safely", async () => {

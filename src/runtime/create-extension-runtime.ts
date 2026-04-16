@@ -71,18 +71,9 @@ function backfillObservedTurnIndices(
     }
 
     const record = state.toolCalls.get(toolResult.toolCallId);
-    if (record && record.turnIndex < 0) {
+    if (record && (record.inferredFromContext || record.turnIndex < 0)) {
       record.turnIndex = turnIndex;
-    }
-  }
-
-  if (state.turnHistory.length > 0) {
-    return;
-  }
-
-  for (const record of state.toolCalls.values()) {
-    if (record.turnIndex < 0) {
-      record.turnIndex = turnIndex;
+      record.inferredFromContext = false;
     }
   }
 }
@@ -122,6 +113,7 @@ function syncToolRecord(
   state: SessionState,
   toolResult: ToolResultLike,
   turnIndex: number,
+  overwriteTurnIndex = false,
 ): ReturnType<typeof getOrCreateToolRecord> | null {
   if (typeof toolResult.toolCallId !== "string" || typeof toolResult.toolName !== "string") {
     return null;
@@ -136,8 +128,9 @@ function syncToolRecord(
     turnIndex,
   );
 
-  if (record.turnIndex < 0) {
+  if ((overwriteTurnIndex && record.inferredFromContext) || record.turnIndex < 0) {
     record.turnIndex = turnIndex;
+    record.inferredFromContext = false;
   }
   record.toolName = toolResult.toolName;
   record.isError = record.isError || Boolean(toolResult.isError);
@@ -152,7 +145,10 @@ function rebuildToolRecordsFromMessages(state: SessionState, messages: AgentMess
     if (!isToolResultMessage(message)) {
       continue;
     }
-    syncToolRecord(state, message, historicalTurnIndex);
+    const record = syncToolRecord(state, message, historicalTurnIndex);
+    if (record && record.inputArgs === undefined) {
+      record.inferredFromContext = true;
+    }
   }
 }
 
@@ -349,7 +345,7 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
 
     if (typeof event.turnIndex === "number" && Number.isFinite(event.turnIndex)) {
       for (const toolResult of event.toolResults) {
-        syncToolRecord(state, toolResult, event.turnIndex);
+        syncToolRecord(state, toolResult, event.turnIndex, true);
       }
     }
 
