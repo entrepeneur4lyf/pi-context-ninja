@@ -273,6 +273,7 @@ function normalizeToolRecord(value: Record<string, unknown>): ToolRecord {
     turnIndex: normalizeNumber(value.turnIndex),
     timestamp: normalizeNumber(value.timestamp),
     tokenEstimate: normalizeNumber(value.tokenEstimate),
+    inferredFromContext: typeof value.inferredFromContext === "boolean" ? value.inferredFromContext : undefined,
     shapedContent: Array.isArray(value.shapedContent)
       ? (value.shapedContent.filter(isRecord).map((block) => ({ ...block })) as unknown as ToolRecord["shapedContent"])
       : undefined,

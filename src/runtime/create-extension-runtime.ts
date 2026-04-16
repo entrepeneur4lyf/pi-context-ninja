@@ -145,8 +145,9 @@ function rebuildToolRecordsFromMessages(state: SessionState, messages: AgentMess
     if (!isToolResultMessage(message)) {
       continue;
     }
+    const hadRecord = state.toolCalls.has(message.toolCallId);
     const record = syncToolRecord(state, message, historicalTurnIndex);
-    if (record && record.inputArgs === undefined) {
+    if (record && !hadRecord) {
       record.inferredFromContext = true;
     }
   }

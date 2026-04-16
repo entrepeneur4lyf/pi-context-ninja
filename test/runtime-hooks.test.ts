@@ -1085,7 +1085,7 @@ describe("runtime hook registration", () => {
     expect(readIndexEntries(getIndexPath("/tmp/project"))).toEqual([]);
   });
 
-  it("rebuilds missing tool records from context messages using a freshness-biased turn until later turn_end makes the authoritative age apply", async () => {
+  it("rebuilds missing tool records from context messages, survives reload, and lets later turn_end make the authoritative age apply", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;
     config.dashboard.enabled = false;
@@ -1126,11 +1126,11 @@ describe("runtime hook registration", () => {
       lastContextWindow: null,
     });
 
-    const { calls, pi } = createPiMock();
-    createExtensionRuntime(pi, config);
+    const firstRuntime = createPiMock();
+    createExtensionRuntime(firstRuntime.pi, config);
 
     const ctx = createContext(sessionId);
-    const contextResult = await calls.get("context")?.(
+    const contextResult = await firstRuntime.calls.get("context")?.(
       {
         messages: [
           {
@@ -1156,7 +1156,7 @@ describe("runtime hook registration", () => {
       { type: "text", text: "boom" },
     ]);
 
-    await calls.get("agent_end")?.(
+    await firstRuntime.calls.get("agent_end")?.(
       {
         messages: [
           {
@@ -1187,6 +1187,7 @@ describe("runtime hook registration", () => {
           toolName: "read",
           isError: true,
           turnIndex: 19,
+          inferredFromContext: true,
         }),
       ],
       [
@@ -1195,13 +1196,45 @@ describe("runtime hook registration", () => {
           toolName: "read",
           isError: false,
           turnIndex: 19,
+          inferredFromContext: true,
         }),
       ],
     ]);
     expect(persisted?.pruneTargets).toEqual([]);
     expect(readIndexEntries(getIndexPath("/tmp/project"))).toHaveLength(0);
 
-    await calls.get("turn_end")?.(
+    await firstRuntime.calls.get("session_shutdown")?.({ type: "session_shutdown" }, ctx);
+
+    const secondRuntime = createPiMock();
+    createExtensionRuntime(secondRuntime.pi, config);
+
+    const contextAfterReload = await secondRuntime.calls.get("context")?.(
+      {
+        messages: [
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "boom" }],
+            toolName: "read",
+            isError: true,
+            toolCallId: "historic-error",
+          },
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "archived output" }],
+            toolName: "read",
+            isError: false,
+            toolCallId: "historic-success",
+          },
+        ],
+      },
+      ctx,
+    ) as { messages?: Array<{ content: Array<{ type: string; text?: string }> }> } | undefined;
+
+    expect(contextAfterReload?.messages?.[0]?.content).toEqual([
+      { type: "text", text: "boom" },
+    ]);
+
+    await secondRuntime.calls.get("turn_end")?.(
       {
         turnIndex: 12,
         message: { role: "assistant", content: "late authoritative turn" },
@@ -1237,28 +1270,29 @@ describe("runtime hook registration", () => {
         "historic-success",
         expect.objectContaining({
           turnIndex: 12,
+          inferredFromContext: false,
         }),
       ],
     ]);
 
-    await calls.get("turn_end")?.(
+    await secondRuntime.calls.get("turn_end")?.(
       { turnIndex: 13, message: { role: "assistant", content: "noop" }, toolResults: [] },
       ctx,
     );
-    await calls.get("turn_end")?.(
+    await secondRuntime.calls.get("turn_end")?.(
       { turnIndex: 14, message: { role: "assistant", content: "noop" }, toolResults: [] },
       ctx,
     );
-    await calls.get("turn_end")?.(
+    await secondRuntime.calls.get("turn_end")?.(
       { turnIndex: 15, message: { role: "assistant", content: "noop" }, toolResults: [] },
       ctx,
     );
-    await calls.get("turn_end")?.(
+    await secondRuntime.calls.get("turn_end")?.(
       { turnIndex: 16, message: { role: "assistant", content: "noop" }, toolResults: [] },
       ctx,
     );
 
-    const purgedContext = await calls.get("context")?.(
+    const purgedContext = await secondRuntime.calls.get("context")?.(
       {
         messages: [
           {
@@ -1287,7 +1321,7 @@ describe("runtime hook registration", () => {
       },
     ]);
 
-    await calls.get("agent_end")?.(
+    await secondRuntime.calls.get("agent_end")?.(
       {
         messages: [
           {

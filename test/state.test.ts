@@ -39,6 +39,7 @@ describe("session state", () => {
       turnIndex: 4,
       timestamp: 123,
       tokenEstimate: 42,
+      inferredFromContext: true,
       shapedContent: [{ type: "text", text: "trimmed" }] as any,
     });
     s.prunedToolIds.add("call-2");
@@ -62,6 +63,7 @@ describe("session state", () => {
         expect.objectContaining({
           toolCallId: "call-1",
           toolName: "read",
+          inferredFromContext: true,
         }),
       ],
     ]);
@@ -76,6 +78,7 @@ describe("session state", () => {
     expect(hydrated.toolCalls.get("call-1")).toMatchObject({
       toolCallId: "call-1",
       toolName: "read",
+      inferredFromContext: true,
     });
     expect(hydrated.prunedToolIds.has("call-2")).toBe(true);
     expect(hydrated.countedSavingsIds.has("call-1:dedup")).toBe(true);

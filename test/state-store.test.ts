@@ -52,6 +52,7 @@ describe("state store", () => {
       turnIndex: 4,
       timestamp: 123,
       tokenEstimate: 42,
+      inferredFromContext: true,
     });
     s.systemHintState.appliedOnce = true;
     s.systemHintState.lastAppliedText = "Keep the context small.";
@@ -81,6 +82,7 @@ describe("state store", () => {
         expect.objectContaining({
           toolCallId: "call-1",
           toolName: "read",
+          inferredFromContext: true,
         }),
       ],
     ]);
@@ -200,6 +202,55 @@ describe("state store", () => {
     expect(loaded?.systemHintState).toEqual({
       appliedOnce: true,
       lastAppliedText: "Keep the context small.",
+    });
+  });
+
+  it("preserves inferred-from-context tool record markers when loading persisted state", async () => {
+    const { loadSessionState, getStatePath } = await loadStateStore();
+    const statePath = getStatePath("marker");
+    const persisted = {
+      toolCalls: [
+        [
+          "call-1",
+          {
+            toolCallId: "call-1",
+            toolName: "read",
+            inputArgs: { path: "a.ts" },
+            inputFingerprint: "{\"path\":\"a.ts\"}",
+            isError: false,
+            turnIndex: 4,
+            timestamp: 123,
+            tokenEstimate: 42,
+            inferredFromContext: true,
+          },
+        ],
+      ],
+      prunedToolIds: [],
+      pruneTargets: [],
+      lastIndexedTurn: -1,
+      tokensKeptOutTotal: 0,
+      tokensSaved: 0,
+      tokensKeptOutByType: {},
+      tokensSavedByType: {},
+      currentTurn: 5,
+      countedSavingsIds: [],
+      turnHistory: [],
+      projectPath: "/tmp/project",
+      lastContextTokens: null,
+      lastContextPercent: null,
+      lastContextWindow: null,
+      systemHintState: {
+        appliedOnce: false,
+        lastAppliedText: null,
+      },
+    };
+
+    fs.writeFileSync(statePath, JSON.stringify(persisted, null, 2), "utf8");
+
+    const loaded = loadSessionState("marker");
+    expect(loaded?.toolCalls[0][1]).toMatchObject({
+      toolCallId: "call-1",
+      inferredFromContext: true,
     });
   });
 });
