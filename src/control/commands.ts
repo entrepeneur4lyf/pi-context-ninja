@@ -23,6 +23,10 @@ export interface CommandRuntimeHealth extends CommandRuntimeHealthSnapshot {
   degradedReasonEntries: Map<string, string>;
 }
 
+export interface CommandRuntimeActions {
+  revokeDashboardSession?: (sessionId: string) => Promise<void> | void;
+}
+
 export function createCommandRuntimeHealth(): CommandRuntimeHealth {
   return {
     configPath: resolveRuntimeConfigPath(),
@@ -73,6 +77,27 @@ function requireProjectPath(ctx: ExtensionCommandContext): string | null {
   return ctx.cwd;
 }
 
+function resolveCommandSessionId(ctx: ExtensionCommandContext): string | null {
+  const sessionId = ctx.sessionManager?.getSessionId?.();
+  if (typeof sessionId !== "string" || sessionId.trim().length === 0) {
+    return null;
+  }
+
+  return sessionId;
+}
+
+async function revokeActiveDashboardSession(
+  ctx: ExtensionCommandContext,
+  runtimeActions?: CommandRuntimeActions,
+): Promise<void> {
+  const sessionId = resolveCommandSessionId(ctx);
+  if (!sessionId) {
+    return;
+  }
+
+  await runtimeActions?.revokeDashboardSession?.(sessionId);
+}
+
 function buildStatusMessage(projectPath: string, runtimeHealth: CommandRuntimeHealthSnapshot): string {
   const status = buildProjectStatus({
     projectPath,
@@ -121,6 +146,7 @@ function exportDoctorReport(projectPath: string, runtimeHealth: CommandRuntimeHe
 export function registerProjectControlCommands(
   pi: ExtensionAPI,
   getRuntimeHealth: () => CommandRuntimeHealthSnapshot,
+  runtimeActions?: CommandRuntimeActions,
 ): void {
   pi.registerCommand("pcn", {
     description: "Pi Context Ninja project controls",
@@ -162,6 +188,7 @@ export function registerProjectControlCommands(
 
       if (action === "disable" && target === "dashboard") {
         disableProjectDashboard(projectPath);
+        await revokeActiveDashboardSession(ctx, runtimeActions);
         ctx.ui.notify("Pi Context Ninja dashboard disabled for this project.", "info");
         return;
       }
@@ -174,6 +201,7 @@ export function registerProjectControlCommands(
 
       if (action === "disable" && target === undefined) {
         disableProject(projectPath);
+        await revokeActiveDashboardSession(ctx, runtimeActions);
         ctx.ui.notify("Pi Context Ninja disabled for this project.", "info");
         return;
       }

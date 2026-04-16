@@ -8,6 +8,7 @@ import { once } from "node:events";
 import { createExtensionRuntime } from "../src/runtime/create-extension-runtime.js";
 import { defaultConfig } from "../src/config.js";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import registerExtension from "../src/index.js";
 import { startDashboardServer } from "../src/dashboard/server.js";
 import { renderDashboardPage } from "../src/dashboard/pages.js";
 import { createAnalyticsStore } from "../src/analytics/store.js";
@@ -37,6 +38,18 @@ async function readSseChunk(reader: ReadableStreamDefaultReader<Uint8Array>, tim
   }
 
   return new TextDecoder().decode(result.value);
+}
+
+async function getAvailablePort(): Promise<number> {
+  const probe = http.createServer();
+  await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+  const address = probe.address();
+  if (!address || typeof address === "string") {
+    throw new Error("expected a bound probe port");
+  }
+  const { port } = address;
+  await new Promise<void>((resolve, reject) => probe.close((error) => (error ? reject(error) : resolve())));
+  return port;
 }
 
 function createDashboardScriptHarness({ search = "" }: { search?: string } = {}) {
@@ -432,15 +445,81 @@ describe("dashboard server", () => {
 });
 
 describe("runtime integration", () => {
+  it.each(["disable", "disable dashboard"])(
+    "revokes the published dashboard snapshot immediately when `/pcn %s` runs",
+    async (command) => {
+      const port = await getAvailablePort();
+      const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-command-disable-dashboard-"));
+      const configPath = path.join(projectDir, "pcn-config.yaml");
+      const sessionId = `session-command-${command.replace(/\s+/g, "-")}`;
+      fs.writeFileSync(
+        configPath,
+        [
+          "analytics:",
+          "  enabled: true",
+          `  dbPath: ${JSON.stringify(path.join(tmpDir, `${sessionId}.sqlite`))}`,
+          "dashboard:",
+          "  enabled: true",
+          `  port: ${port}`,
+          '  bindHost: "127.0.0.1"',
+        ].join("\n"),
+        "utf8",
+      );
+      process.env.PCN_CONFIG_PATH = configPath;
+
+      const piCalls = new Map<string, (...args: any[]) => unknown>();
+      const commands = new Map<string, { handler: (...args: any[]) => unknown }>();
+      const pi = {
+        on: vi.fn((name: string, handler: (...args: any[]) => unknown) => {
+          piCalls.set(name, handler);
+        }),
+        registerCommand: vi.fn((name: string, options: { handler: (...args: any[]) => unknown }) => {
+          commands.set(name, options);
+        }),
+      } as unknown as ExtensionAPI;
+
+      const ctx = {
+        cwd: projectDir,
+        sessionManager: {
+          getSessionId: () => sessionId,
+          getEntries: () => [{ id: "m1" }, { id: "m2" }, { id: "m3" }],
+        },
+        getContextUsage: () => ({ tokens: 420, percent: 0.42, contextWindow: 1000 }),
+        ui: { notify: vi.fn() },
+      } as any;
+
+      let runtimeStarted = false;
+
+      try {
+        registerExtension(pi);
+        runtimeStarted = true;
+
+        await piCalls.get("turn_end")?.(
+          {
+            turnIndex: 0,
+            message: { role: "assistant", content: "first turn" },
+            toolResults: [],
+          },
+          ctx,
+        );
+
+        const firstSnapshot = await fetch(`http://127.0.0.1:${port}/snapshot?sessionId=${sessionId}`).then((res) => res.json());
+        expect(firstSnapshot.totalTurns).toBe(1);
+
+        await commands.get("pcn")?.handler(command, ctx);
+
+        await expect(fetch(`http://127.0.0.1:${port}/snapshot?sessionId=${sessionId}`)).rejects.toThrow();
+      } finally {
+        if (runtimeStarted) {
+          await piCalls.get("session_shutdown")?.({}, ctx);
+        }
+        fs.rmSync(projectDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("clears a previously published dashboard snapshot after the project is disabled on a later turn", async () => {
-    const probe = http.createServer();
-    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
-    const address = probe.address();
-    if (!address || typeof address === "string") {
-      throw new Error("expected a bound probe port");
-    }
-    const port = address.port;
-    await new Promise<void>((resolve, reject) => probe.close((error) => (error ? reject(error) : resolve())));
+    const port = await getAvailablePort();
 
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-project-disable-transition-"));
     const controlDir = path.join(projectDir, ".pi", ".pi-ninja");
@@ -512,14 +591,7 @@ describe("runtime integration", () => {
   });
 
   it("clears a previously published dashboard snapshot after dashboard is disabled on a later turn", async () => {
-    const probe = http.createServer();
-    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
-    const address = probe.address();
-    if (!address || typeof address === "string") {
-      throw new Error("expected a bound probe port");
-    }
-    const port = address.port;
-    await new Promise<void>((resolve, reject) => probe.close((error) => (error ? reject(error) : resolve())));
+    const port = await getAvailablePort();
 
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-dashboard-disable-transition-"));
     const controlDir = path.join(projectDir, ".pi", ".pi-ninja");
@@ -591,14 +663,7 @@ describe("runtime integration", () => {
   });
 
   it("records analytics but does not publish when only dashboard is disabled for the project", async () => {
-    const probe = http.createServer();
-    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
-    const address = probe.address();
-    if (!address || typeof address === "string") {
-      throw new Error("expected a bound probe port");
-    }
-    const port = address.port;
-    await new Promise<void>((resolve, reject) => probe.close((error) => (error ? reject(error) : resolve())));
+    const port = await getAvailablePort();
 
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-dashboard-disabled-"));
     fs.mkdirSync(path.join(projectDir, ".pi", ".pi-ninja"), { recursive: true });
@@ -654,14 +719,7 @@ describe("runtime integration", () => {
   });
 
   it("initializes analytics and dashboard once, records turn analytics, and shuts down cleanly", async () => {
-    const probe = http.createServer();
-    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
-    const address = probe.address();
-    if (!address || typeof address === "string") {
-      throw new Error("expected a bound probe port");
-    }
-    const port = address.port;
-    await new Promise<void>((resolve, reject) => probe.close((error) => (error ? reject(error) : resolve())));
+    const port = await getAvailablePort();
 
     const piCalls = new Map<string, (...args: any[]) => unknown>();
     const pi = {

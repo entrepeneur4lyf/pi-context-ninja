@@ -5,7 +5,7 @@ import {
   registerProjectControlCommands,
   replaceCommandRuntimeDegradedReasons,
 } from "./control/commands.js";
-import { createExtensionRuntime } from "./runtime/create-extension-runtime.js";
+import { createExtensionRuntime, type ExtensionRuntimeControls } from "./runtime/create-extension-runtime.js";
 
 function formatStartupError(prefix: string, error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
@@ -15,15 +15,20 @@ function formatStartupError(prefix: string, error: unknown): string {
 export default function (pi: ExtensionAPI) {
   const runtimeHealth = createCommandRuntimeHealth();
   runtimeHealth.configPath = resolveRuntimeConfigPath();
+  let runtimeControls: ExtensionRuntimeControls | null = null;
   registerProjectControlCommands(pi, () => ({
     configPath: runtimeHealth.configPath,
     runtimeLoaded: runtimeHealth.runtimeLoaded,
     degradedReasons: [...runtimeHealth.degradedReasons],
-  }));
+  }), {
+    revokeDashboardSession: async (sessionId: string) => {
+      await runtimeControls?.revokeDashboardSession(sessionId);
+    },
+  });
 
   try {
     const config = loadRuntimeConfig();
-    createExtensionRuntime(pi, config, runtimeHealth);
+    runtimeControls = createExtensionRuntime(pi, config, runtimeHealth);
     runtimeHealth.runtimeLoaded = true;
     replaceCommandRuntimeDegradedReasons(runtimeHealth, []);
   } catch (error) {

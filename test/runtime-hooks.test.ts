@@ -141,6 +141,63 @@ describe("runtime hook registration", () => {
     }
   });
 
+  it.each(["disable", "disable dashboard"])(
+    "revokes the active dashboard session immediately when `/pcn %s` runs",
+    async (command) => {
+      const dashboardHandle = {
+        ready: Promise.resolve(),
+        close: vi.fn(async () => {}),
+        clearSession: vi.fn(),
+        publish: vi.fn(),
+      };
+      const startDashboardServerMock = vi.fn(() => dashboardHandle);
+
+      vi.resetModules();
+      vi.doMock("../src/dashboard/server.js", () => ({
+        startDashboardServer: startDashboardServerMock,
+      }));
+
+      const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-project-command-revoke-"));
+      const sessionId = `session-${command.replace(/\s+/g, "-")}`;
+      const ctx = {
+        ...createContext(sessionId, projectDir),
+        ui: {
+          notify: vi.fn(),
+        },
+      } as any;
+
+      try {
+        const { default: registerExtensionWithMockedDashboard } = await import("../src/index.js");
+        const { commands, calls, pi } = createPiMock();
+        registerExtensionWithMockedDashboard(pi);
+
+        await calls.get("turn_end")?.(
+          {
+            turnIndex: 0,
+            message: { role: "assistant", content: "first turn" },
+            toolResults: [],
+          },
+          ctx,
+        );
+
+        expect(startDashboardServerMock).toHaveBeenCalledTimes(1);
+
+        dashboardHandle.clearSession.mockClear();
+        dashboardHandle.close.mockClear();
+
+        await commands.get("pcn")?.handler(command, ctx);
+
+        expect(dashboardHandle.clearSession).toHaveBeenCalledWith(sessionId);
+        expect(dashboardHandle.close).toHaveBeenCalledTimes(1);
+      } finally {
+        await Promise.resolve();
+        vi.doUnmock("../src/dashboard/server.js");
+        vi.resetModules();
+        fs.rmSync(projectDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("keeps /pcn registered when runtime config loading fails during startup", () => {
     const { commands, pi } = createPiMock();
     const brokenConfigPath = path.join(stateDir, "broken-config.yaml");

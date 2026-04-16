@@ -44,6 +44,10 @@ const dashboardRuntime: DashboardRuntime = {
 
 const DASHBOARD_RUNTIME_DEGRADED_REASON_KEY = "dashboard-bind";
 
+export interface ExtensionRuntimeControls {
+  revokeDashboardSession: (sessionId: string) => Promise<void>;
+}
+
 function getState(sessionId: string, projectPath?: string): SessionState {
   let state = sessionMap.get(sessionId);
   if (!state) {
@@ -413,7 +417,11 @@ function isDataPlaneEnabled(projectPath?: string): boolean {
   return isProjectEnabled(projectPath);
 }
 
-export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig, runtimeHealth?: CommandRuntimeHealth): void {
+export function createExtensionRuntime(
+  pi: ExtensionAPI,
+  config: PCNConfig,
+  runtimeHealth?: CommandRuntimeHealth,
+): ExtensionRuntimeControls {
   pi.on("tool_call", (event, ctx) => {
     if (!isDataPlaneEnabled(ctx.cwd)) {
       return;
@@ -607,4 +615,8 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig, runt
     }
     await releaseSessionResources(sessionId, runtimeHealth);
   });
+
+  return {
+    revokeDashboardSession: async (sessionId: string) => revokeDashboardSession(sessionId, runtimeHealth),
+  };
 }
