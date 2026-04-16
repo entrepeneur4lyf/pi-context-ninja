@@ -43,14 +43,37 @@ export function saveSessionState(sessionId: string, state: SessionState): void {
 
 export function loadSessionState(sessionId: string): PersistedSessionState | null {
   const statePath = getStatePath(sessionId);
+  let raw: string;
 
   try {
-    const raw = fs.readFileSync(statePath, "utf8");
-    return normalizePersistedSessionState(JSON.parse(raw));
+    raw = fs.readFileSync(statePath, "utf8");
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") {
       return null;
     }
     throw error;
+  }
+
+  try {
+    const normalized = normalizePersistedSessionState(JSON.parse(raw));
+    if (normalized === null) {
+      quarantineCorruptStateFile(statePath);
+      return null;
+    }
+
+    return normalized;
+  } catch {
+    quarantineCorruptStateFile(statePath);
+    return null;
+  }
+}
+
+function quarantineCorruptStateFile(statePath: string): void {
+  const quarantinePath = `${statePath}.corrupt.${Date.now()}`;
+
+  try {
+    fs.renameSync(statePath, quarantinePath);
+  } catch {
+    // Ignore quarantine failures so corrupted state cannot crash runtime boot.
   }
 }

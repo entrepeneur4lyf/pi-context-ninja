@@ -36,13 +36,20 @@ export function readIndexEntries(filePath: string): IndexEntry[] {
     return [];
   }
 
-  return fs
-    .readFileSync(filePath, "utf8")
-    .split("\n")
-    .filter((line) => line.trim().length > 0)
-    .map((line) => {
-      const parsed = JSON.parse(line) as IndexEntry;
-      return {
+  const entries: IndexEntry[] = [];
+
+  for (const line of fs.readFileSync(filePath, "utf8").split("\n")) {
+    if (line.trim().length === 0) {
+      continue;
+    }
+
+    try {
+      const parsed = JSON.parse(line);
+      if (!isIndexEntryRecord(parsed)) {
+        continue;
+      }
+
+      entries.push({
         ...parsed,
         pruneTargets: Array.isArray(parsed.pruneTargets)
           ? parsed.pruneTargets.filter((target): target is IndexedPruneTarget => (
@@ -53,6 +60,15 @@ export function readIndexEntries(filePath: string): IndexEntry[] {
             typeof target.replacementText === "string"
           ))
           : [],
-      };
-    });
+      });
+    } catch {
+      continue;
+    }
+  }
+
+  return entries;
+}
+
+function isIndexEntryRecord(value: unknown): value is Omit<IndexEntry, "pruneTargets"> & { pruneTargets?: unknown } {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

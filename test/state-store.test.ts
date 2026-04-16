@@ -111,6 +111,21 @@ describe("state store", () => {
     expect(loadSessionState("missing")).toBeNull();
   });
 
+  it("returns null and quarantines malformed session JSON", async () => {
+    const { loadSessionState, getStatePath } = await loadStateStore();
+    const statePath = getStatePath("corrupt");
+
+    fs.writeFileSync(statePath, "{\"currentTurn\":", "utf8");
+
+    expect(() => loadSessionState("corrupt")).not.toThrow();
+    expect(loadSessionState("corrupt")).toBeNull();
+    expect(fs.existsSync(statePath)).toBe(false);
+
+    const quarantined = fs.readdirSync(stateDir).filter((entry) => entry.startsWith("corrupt.json.corrupt."));
+    expect(quarantined).toHaveLength(1);
+    expect(loadSessionState("corrupt")).toBeNull();
+  });
+
   it("writes atomically without leaving a tmp file behind", async () => {
     const { saveSessionState, getStatePath } = await loadStateStore();
     const s = createSessionState("/tmp");

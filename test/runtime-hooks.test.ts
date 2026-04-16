@@ -173,6 +173,43 @@ describe("runtime hook registration", () => {
     expect(second).toBeUndefined();
   });
 
+  it("falls back to a fresh session state when persisted session JSON is malformed", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = false;
+    config.dashboard.enabled = false;
+    config.systemHint.enabled = true;
+    config.systemHint.frequency = "once_per_session";
+    config.systemHint.text = "Keep the context small.";
+
+    const sessionId = "session-corrupt-state";
+    fs.writeFileSync(path.join(stateDir, `${encodeURIComponent(sessionId)}.json`), "{\"currentTurn\":", "utf8");
+
+    const { calls, pi } = createPiMock();
+    createExtensionRuntime(pi, config);
+
+    const result = await calls.get("before_agent_start")?.(
+      {
+        type: "before_agent_start",
+        prompt: "question",
+        images: undefined,
+        systemPrompt: "base",
+      },
+      createContext(sessionId),
+    );
+
+    expect(result).toEqual({ systemPrompt: "base\n\nKeep the context small." });
+
+    const { loadSessionState } = await loadStateStore();
+    const persisted = loadSessionState(sessionId);
+    expect(persisted).not.toBeNull();
+    expect(persisted?.projectPath).toBe("/tmp/project");
+    expect(persisted?.systemHintState).toEqual({
+      appliedOnce: true,
+      lastAppliedText: "Keep the context small.",
+    });
+    expect(persisted?.turnHistory).toEqual([]);
+  });
+
   it("re-applies the system hint when frequency is on_change and the text changes", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;
