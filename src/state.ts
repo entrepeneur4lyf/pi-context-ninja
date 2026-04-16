@@ -22,6 +22,7 @@ export function createSessionState(projectPath: string): SessionState {
     lastContextTokens: null,
     lastContextPercent: null,
     lastContextWindow: null,
+    hasObservedTurnBoundary: false,
     systemHintState: createSystemHintState(),
   };
 }
@@ -33,6 +34,9 @@ export function getOrCreateToolRecord(
   inputArgs: unknown,
   isError: boolean,
   turnIndex: number,
+  options?: {
+    awaitingAuthoritativeTurn?: boolean;
+  },
 ): ToolRecord {
   const existing = state.toolCalls.get(toolCallId);
   if (existing) return existing;
@@ -46,6 +50,7 @@ export function getOrCreateToolRecord(
     turnIndex,
     timestamp: Date.now(),
     tokenEstimate: 0,
+    awaitingAuthoritativeTurn: options?.awaitingAuthoritativeTurn,
   };
   state.toolCalls.set(toolCallId, record);
   return record;
@@ -116,6 +121,7 @@ export function hydrateSessionState(persisted: PersistedSessionState): SessionSt
     lastContextTokens: persisted.lastContextTokens,
     lastContextPercent: persisted.lastContextPercent,
     lastContextWindow: persisted.lastContextWindow,
+    hasObservedTurnBoundary: false,
     systemHintState: { ...persisted.systemHintState },
   };
 }
@@ -275,6 +281,8 @@ function normalizeToolRecord(value: Record<string, unknown>): ToolRecord {
     timestamp: normalizeNumber(value.timestamp),
     tokenEstimate: normalizeNumber(value.tokenEstimate),
     inferredFromContext: typeof value.inferredFromContext === "boolean" ? value.inferredFromContext : undefined,
+    awaitingAuthoritativeTurn:
+      typeof value.awaitingAuthoritativeTurn === "boolean" ? value.awaitingAuthoritativeTurn : undefined,
     shapedContent: Array.isArray(value.shapedContent)
       ? (value.shapedContent.filter(isRecord).map((block) => ({ ...block })) as unknown as ToolRecord["shapedContent"])
       : undefined,

@@ -15,6 +15,7 @@ export interface ToolRecord {
   timestamp: number;
   tokenEstimate: number;
   inferredFromContext?: boolean;
+  awaitingAuthoritativeTurn?: boolean;
   shapedContent?: (TextContent | ImageContent)[];
 }
 
@@ -80,6 +81,7 @@ export interface SessionState {
   lastContextTokens: number | null;
   lastContextPercent: number | null;
   lastContextWindow: number | null;
+  hasObservedTurnBoundary: boolean;
   systemHintState: SystemHintState;
 }
 

@@ -6,6 +6,7 @@ describe("session state", () => {
     const s = createSessionState("/tmp/p");
     expect(s.tokensKeptOutTotal).toBe(0);
     expect(s.currentTurn).toBe(-1);
+    expect(s.hasObservedTurnBoundary).toBe(false);
   });
   it("creates and retrieves tool records", () => {
     const s = createSessionState("/tmp");
@@ -40,6 +41,7 @@ describe("session state", () => {
       timestamp: 123,
       tokenEstimate: 42,
       inferredFromContext: true,
+      awaitingAuthoritativeTurn: true,
       shapedContent: [{ type: "text", text: "trimmed" }] as any,
     });
     s.prunedToolIds.add("call-2");
@@ -64,6 +66,7 @@ describe("session state", () => {
           toolCallId: "call-1",
           toolName: "read",
           inferredFromContext: true,
+          awaitingAuthoritativeTurn: true,
         }),
       ],
     ]);
@@ -79,6 +82,7 @@ describe("session state", () => {
       toolCallId: "call-1",
       toolName: "read",
       inferredFromContext: true,
+      awaitingAuthoritativeTurn: true,
     });
     expect(hydrated.prunedToolIds.has("call-2")).toBe(true);
     expect(hydrated.countedSavingsIds.has("call-1:dedup")).toBe(true);
@@ -86,6 +90,7 @@ describe("session state", () => {
     expect(hydrated.lastContextTokens).toBe(1000);
     expect(hydrated.lastContextPercent).toBe(0.5);
     expect(hydrated.lastContextWindow).toBe(2000);
+    expect(hydrated.hasObservedTurnBoundary).toBe(false);
   });
 
   it("serializes and hydrates persisted system hint state", () => {

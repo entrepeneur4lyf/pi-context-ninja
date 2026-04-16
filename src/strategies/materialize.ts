@@ -41,7 +41,10 @@ export function materializeContext(
 
     if (isErr) {
       if (config.strategies.errorPurge.enabled) {
-        const errorTurnIndex = toolRecord?.turnIndex ?? state.currentTurn;
+        const errorTurnIndex =
+          toolRecord && toolRecord.turnIndex >= 0 && !toolRecord.awaitingAuthoritativeTurn
+            ? toolRecord.turnIndex
+            : state.currentTurn;
         if (
           shouldPurgeError(
             errorTurnIndex,

@@ -544,6 +544,15 @@ describe("runtime hook registration", () => {
       ctx,
     );
 
+    await calls.get("turn_end")?.(
+      {
+        turnIndex: 9,
+        message: { role: "assistant", content: "later" },
+        toolResults: [],
+      },
+      ctx,
+    );
+
     await calls.get("agent_end")?.(
       {
         messages: [
@@ -1266,6 +1275,167 @@ describe("runtime hook registration", () => {
         }),
       ],
     ]);
+    expect(persisted?.pruneTargets).toEqual([]);
+    expect(readIndexEntries(getIndexPath("/tmp/project"))).toEqual([]);
+  });
+
+  it("overwrites stale resumed positive turn indices with the later authoritative turn_end turn", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = false;
+    config.dashboard.enabled = false;
+    config.backgroundIndexing.enabled = true;
+    config.backgroundIndexing.minRangeTurns = 1;
+    config.strategies.shortCircuit.enabled = false;
+    config.strategies.codeFilter.enabled = false;
+    config.strategies.truncation.enabled = false;
+    config.strategies.errorPurge.enabled = true;
+    config.strategies.errorPurge.maxTurnsAgo = 3;
+    config.strategies.deduplication.enabled = false;
+
+    const sessionId = "session-resumed-stale-positive-turn";
+    writeLegacyState(sessionId, {
+      toolCalls: [],
+      prunedToolIds: [],
+      pruneTargets: [],
+      lastIndexedTurn: -1,
+      tokensKeptOutTotal: 0,
+      tokensSaved: 0,
+      tokensKeptOutByType: {},
+      tokensSavedByType: {},
+      currentTurn: 2,
+      countedSavingsIds: [],
+      turnHistory: [
+        {
+          turnIndex: 1,
+          toolCount: 0,
+          messageCountAfterTurn: 2,
+          tokensKeptOutDelta: 0,
+          tokensSavedDelta: 0,
+          timestamp: 111,
+        },
+      ],
+      projectPath: "/tmp/project",
+      lastContextTokens: null,
+      lastContextPercent: null,
+      lastContextWindow: null,
+    });
+
+    const { calls, pi } = createPiMock();
+    createExtensionRuntime(pi, config);
+
+    const ctx = createContext(sessionId);
+    const freshMessages = [
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: "boom" }],
+        toolName: "read",
+        isError: true,
+        toolCallId: "fresh-error",
+      },
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: "fresh body" }],
+        toolName: "read",
+        isError: false,
+        toolCallId: "fresh-success",
+      },
+    ] as const;
+
+    calls.get("tool_call")?.(
+      {
+        toolCallId: "fresh-error",
+        toolName: "read",
+        input: { path: "README.md" },
+      },
+      ctx,
+    );
+    calls.get("tool_result")?.(
+      {
+        toolCallId: "fresh-error",
+        toolName: "read",
+        isError: true,
+        content: [{ type: "text", text: "boom" }],
+      },
+      ctx,
+    );
+
+    calls.get("tool_call")?.(
+      {
+        toolCallId: "fresh-success",
+        toolName: "read",
+        input: { path: "README.md" },
+      },
+      ctx,
+    );
+    calls.get("tool_result")?.(
+      {
+        toolCallId: "fresh-success",
+        toolName: "read",
+        isError: false,
+        content: [{ type: "text", text: "fresh body" }],
+      },
+      ctx,
+    );
+
+    await calls.get("turn_end")?.(
+      {
+        turnIndex: 12,
+        message: { role: "assistant", content: "done" },
+        toolResults: freshMessages,
+      },
+      ctx,
+    );
+
+    const { loadSessionState } = await loadStateStore();
+    let persisted = loadSessionState(sessionId);
+    expect(persisted?.toolCalls).toEqual([
+      [
+        "fresh-error",
+        expect.objectContaining({
+          turnIndex: 12,
+          isError: true,
+        }),
+      ],
+      [
+        "fresh-success",
+        expect.objectContaining({
+          turnIndex: 12,
+          isError: false,
+        }),
+      ],
+    ]);
+
+    await calls.get("turn_end")?.(
+      {
+        turnIndex: 13,
+        message: { role: "assistant", content: "next turn" },
+        toolResults: [],
+      },
+      ctx,
+    );
+
+    await calls.get("agent_end")?.(
+      {
+        messages: freshMessages as any,
+      },
+      ctx,
+    );
+
+    const contextResult = await calls.get("context")?.(
+      {
+        messages: freshMessages as any,
+      },
+      ctx,
+    ) as { messages?: Array<{ content: Array<{ type: string; text?: string }> }> } | undefined;
+
+    expect(contextResult?.messages?.[0]?.content).toEqual([
+      { type: "text", text: "boom" },
+    ]);
+    expect(contextResult?.messages?.[1]?.content).toEqual([
+      { type: "text", text: "fresh body" },
+    ]);
+
+    persisted = loadSessionState(sessionId);
     expect(persisted?.pruneTargets).toEqual([]);
     expect(readIndexEntries(getIndexPath("/tmp/project"))).toEqual([]);
   });

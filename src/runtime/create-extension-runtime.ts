@@ -71,8 +71,9 @@ function backfillObservedTurnIndices(
     }
 
     const record = state.toolCalls.get(toolResult.toolCallId);
-    if (record && (record.inferredFromContext || record.turnIndex < 0)) {
+    if (record && (record.awaitingAuthoritativeTurn || record.inferredFromContext || record.turnIndex < 0)) {
       record.turnIndex = turnIndex;
+      record.awaitingAuthoritativeTurn = false;
       record.inferredFromContext = false;
     }
   }
@@ -113,7 +114,10 @@ function syncToolRecord(
   state: SessionState,
   toolResult: ToolResultLike,
   turnIndex: number,
-  overwriteTurnIndex = false,
+  options?: {
+    overwriteTurnIndex?: boolean;
+    awaitingAuthoritativeTurn?: boolean;
+  },
 ): ReturnType<typeof getOrCreateToolRecord> | null {
   if (typeof toolResult.toolCallId !== "string" || typeof toolResult.toolName !== "string") {
     return null;
@@ -126,10 +130,17 @@ function syncToolRecord(
     undefined,
     Boolean(toolResult.isError),
     turnIndex,
+    {
+      awaitingAuthoritativeTurn: options?.awaitingAuthoritativeTurn,
+    },
   );
 
-  if ((overwriteTurnIndex && record.inferredFromContext) || record.turnIndex < 0) {
+  if (
+    ((options?.overwriteTurnIndex ?? false) && (record.inferredFromContext || record.awaitingAuthoritativeTurn))
+    || record.turnIndex < 0
+  ) {
     record.turnIndex = turnIndex;
+    record.awaitingAuthoritativeTurn = false;
     record.inferredFromContext = false;
   }
   record.toolName = toolResult.toolName;
@@ -369,13 +380,18 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
       event.input,
       false,
       state.currentTurn,
+      {
+        awaitingAuthoritativeTurn: !state.hasObservedTurnBoundary,
+      },
     );
   });
 
   pi.on("tool_result", (event, ctx) => {
     const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId, ctx.cwd);
-    const record = syncToolRecord(state, event, state.currentTurn);
+    const record = syncToolRecord(state, event, state.currentTurn, {
+      awaitingAuthoritativeTurn: !state.hasObservedTurnBoundary,
+    });
     const shapedContent = shapeImmediateToolResult(event, config);
     if (record) {
       record.shapedContent = shapedContent?.map((block) => ({ ...block }));
@@ -403,7 +419,9 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
 
     if (typeof event.turnIndex === "number" && Number.isFinite(event.turnIndex)) {
       for (const toolResult of event.toolResults) {
-        syncToolRecord(state, toolResult, event.turnIndex, true);
+        syncToolRecord(state, toolResult, event.turnIndex, {
+          overwriteTurnIndex: true,
+        });
       }
     }
 
@@ -436,6 +454,7 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
     });
 
     state.currentTurn = typeof event.turnIndex === "number" ? event.turnIndex + 1 : state.currentTurn + 1;
+    state.hasObservedTurnBoundary = true;
     const latestTurn = state.turnHistory.at(-1);
     try {
       if (latestTurn) {

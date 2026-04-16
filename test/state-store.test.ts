@@ -53,6 +53,7 @@ describe("state store", () => {
       timestamp: 123,
       tokenEstimate: 42,
       inferredFromContext: true,
+      awaitingAuthoritativeTurn: true,
     });
     s.systemHintState.appliedOnce = true;
     s.systemHintState.lastAppliedText = "Keep the context small.";
@@ -83,6 +84,7 @@ describe("state store", () => {
           toolCallId: "call-1",
           toolName: "read",
           inferredFromContext: true,
+          awaitingAuthoritativeTurn: true,
         }),
       ],
     ]);
@@ -301,6 +303,7 @@ describe("state store", () => {
             timestamp: 123,
             tokenEstimate: 42,
             inferredFromContext: true,
+            awaitingAuthoritativeTurn: true,
           },
         ],
       ],
@@ -330,6 +333,7 @@ describe("state store", () => {
     expect(loaded?.toolCalls[0][1]).toMatchObject({
       toolCallId: "call-1",
       inferredFromContext: true,
+      awaitingAuthoritativeTurn: true,
     });
   });
 });

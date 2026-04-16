@@ -32,6 +32,7 @@ export function refreshRangeIndex(
     const record = state.toolCalls.get(message.toolCallId);
     return (
       record !== undefined &&
+      !record.awaitingAuthoritativeTurn &&
       !record.isError &&
       !(message as any).isError &&
       canApplyPruneTarget(message) &&
