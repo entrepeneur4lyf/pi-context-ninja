@@ -72,4 +72,17 @@ describe("project control state", () => {
     enableProjectDashboard(projectDir);
     expect(readProjectControlState(projectDir).dashboardEnabled).toBe(true);
   });
+
+  it("rejects blank project paths", () => {
+    for (const projectPath of ["", " ", "\n\t "]) {
+      expect(() => resolveProjectControlDir(projectPath)).toThrow("Project path must be a non-blank string.");
+      expect(() => readProjectControlState(projectPath)).toThrow("Project path must be a non-blank string.");
+      expect(() => disableProject(projectPath)).toThrow("Project path must be a non-blank string.");
+      expect(() => enableProject(projectPath)).toThrow("Project path must be a non-blank string.");
+      expect(() => disableProjectDashboard(projectPath)).toThrow("Project path must be a non-blank string.");
+      expect(() => enableProjectDashboard(projectPath)).toThrow("Project path must be a non-blank string.");
+      expect(() => isProjectEnabled(projectPath)).toThrow("Project path must be a non-blank string.");
+      expect(() => isProjectDashboardEnabled(projectPath)).toThrow("Project path must be a non-blank string.");
+    }
+  });
 });

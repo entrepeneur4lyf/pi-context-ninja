@@ -1,7 +1,7 @@
 import { readProjectControlState } from "./project-state.js";
 
 export function isProjectEnabled(projectPath?: string): boolean {
-  if (!projectPath) {
+  if (projectPath === undefined) {
     return true;
   }
 
@@ -9,7 +9,7 @@ export function isProjectEnabled(projectPath?: string): boolean {
 }
 
 export function isProjectDashboardEnabled(projectPath?: string): boolean {
-  if (!projectPath) {
+  if (projectPath === undefined) {
     return true;
   }
 

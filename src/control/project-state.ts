@@ -14,8 +14,16 @@ export interface ProjectControlState {
   dashboardDisabledMarkerPath: string;
 }
 
+function requireProjectPath(projectPath: string): string {
+  if (projectPath.trim().length === 0) {
+    throw new Error("Project path must be a non-blank string.");
+  }
+
+  return projectPath;
+}
+
 export function resolveProjectControlDir(projectPath: string): string {
-  return path.join(projectPath, ...CONTROL_DIR_PARTS);
+  return path.join(requireProjectPath(projectPath), ...CONTROL_DIR_PARTS);
 }
 
 export function ensureProjectControlDir(projectPath: string): string {
