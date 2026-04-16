@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { defaultConfig } from "../src/config";
-import { createSessionState } from "../src/state";
+import { createSessionState, getOrCreateToolRecord } from "../src/state";
 import { materializeContext } from "../src/strategies/materialize";
 
 describe("materialize", () => {
@@ -426,10 +426,46 @@ describe("materialize", () => {
     expect(state.tokensKeptOutByType.dedup ?? 0).toBe(0);
   });
 
-  it("deduplicates normalized content across distinct tool calls", () => {
+  it("does not deduplicate normalized content from different read inputs", () => {
     const state = createSessionState("/tmp");
     const cfg = defaultConfig();
     cfg.strategies.deduplication.maxOccurrences = 1;
+
+    getOrCreateToolRecord(state, "t1", "read", { path: "a.log" }, false, 0);
+    getOrCreateToolRecord(state, "t2", "read", { path: "b.log" }, false, 0);
+
+    const msgs = [
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: "build 2026-04-14T10:11:12Z abcdefab-cdef-4123-89ab-abcdefabcdef" }],
+        toolName: "read",
+        isError: false,
+        toolCallId: "t1",
+        _key: "t1",
+      },
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: "build 2026-04-15T11:12:13Z 12345678-1234-4123-8234-1234567890ab" }],
+        toolName: "read",
+        isError: false,
+        toolCallId: "t2",
+        _key: "t2",
+      },
+    ] as any;
+
+    const result = materializeContext(msgs, { state, config: cfg });
+
+    expect((result.messages as any)[0].content[0].text).toContain("build");
+    expect((result.messages as any)[1].content[0].text).toContain("build");
+  });
+
+  it("deduplicates repeated normalized content from the same read input fingerprint", () => {
+    const state = createSessionState("/tmp");
+    const cfg = defaultConfig();
+    cfg.strategies.deduplication.maxOccurrences = 1;
+
+    getOrCreateToolRecord(state, "t1", "read", { path: "a.log" }, false, 0);
+    getOrCreateToolRecord(state, "t2", "read", { path: "a.log" }, false, 0);
 
     const msgs = [
       {

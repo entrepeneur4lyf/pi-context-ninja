@@ -9,9 +9,10 @@ describe("dedup", () => {
     expect(seen.size).toBe(1);
   });
 
-  it("deduplicates normalized content across distinct tool calls", () => {
+  it("deduplicates repeated occurrences when the fingerprint already encodes provenance", () => {
     const seen = new Map<string, number>();
-    const fingerprint = `read::${normalizeContent("build 2026-04-14T10:11:12Z abcdefab-cdef-4123-89ab-abcdefabcdef")}`;
+    const normalized = normalizeContent("build 2026-04-14T10:11:12Z abcdefab-cdef-4123-89ab-abcdefabcdef");
+    const fingerprint = `read::${normalized}::{\"path\":\"a.log\"}`;
 
     expect(fingerprintDedup("c1", "read", fingerprint, seen, 1)).toBeNull();
     expect(fingerprintDedup("c2", "read", fingerprint, seen, 1)).toBe("[dedup: see earlier read result x1]");

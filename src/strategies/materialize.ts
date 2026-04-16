@@ -36,12 +36,12 @@ export function materializeContext(
     const originalText = extractTextContent(msg);
     const toolName = (msg as any).toolName ?? "";
     const toolCallId = (msg as any).toolCallId ?? "";
+    const toolRecord = state.toolCalls.get(toolCallId);
     const isErr = !!(msg as any).isError;
 
     if (isErr) {
       if (config.strategies.errorPurge.enabled) {
-        const rec = state.toolCalls.get(toolCallId);
-        const errorTurnIndex = rec?.turnIndex ?? state.currentTurn;
+        const errorTurnIndex = toolRecord?.turnIndex ?? state.currentTurn;
         if (
           shouldPurgeError(
             errorTurnIndex,
@@ -136,8 +136,11 @@ export function materializeContext(
     }
 
     if (config.strategies.deduplication.enabled) {
+      const normalizedFingerprint = `${toolName}::${normalizeContent(dedupText)}`;
+      const inputFingerprint = toolRecord?.inputFingerprint.trim();
       const fingerprint =
-        (msg as any).__pcnFingerprint ?? `${toolName}::${normalizeContent(dedupText)}`;
+        (msg as any).__pcnFingerprint
+        ?? (inputFingerprint ? `${normalizedFingerprint}::${inputFingerprint}` : normalizedFingerprint);
       const candidate = fingerprintDedup(
         toolCallId,
         toolName,
