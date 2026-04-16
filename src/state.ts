@@ -121,7 +121,7 @@ export function hydrateSessionState(persisted: PersistedSessionState): SessionSt
 }
 
 export function normalizePersistedSessionState(input: unknown): PersistedSessionState | null {
-  if (!isRecord(input)) {
+  if (!isPersistedSessionStateRoot(input)) {
     return null;
   }
 
@@ -294,6 +294,64 @@ function normalizeSystemHintState(value: unknown): SystemHintState {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isPersistedSessionStateRoot(value: unknown): value is Record<string, unknown> {
+  if (!isRecord(value)) {
+    return false;
+  }
+
+  return hasSharedPersistedSessionStateFields(value)
+    && hasOptionalPersistedSessionStateCompatFields(value);
+}
+
+function hasSharedPersistedSessionStateFields(value: Record<string, unknown>): boolean {
+  return isFiniteNumber(value.lastIndexedTurn)
+    && isFiniteNumber(value.tokensKeptOutTotal)
+    && isFiniteNumber(value.tokensSaved)
+    && isRecord(value.tokensKeptOutByType)
+    && isRecord(value.tokensSavedByType)
+    && isFiniteNumber(value.currentTurn)
+    && Array.isArray(value.turnHistory)
+    && typeof value.projectPath === "string";
+}
+
+function hasOptionalPersistedSessionStateCompatFields(value: Record<string, unknown>): boolean {
+  return isOptionalArray(value.omitRanges)
+    && isOptionalArray(value.toolCalls)
+    && isOptionalArray(value.prunedToolIds)
+    && isOptionalArray(value.pruneTargets)
+    && isOptionalArray(value.countedSavingsIds)
+    && isOptionalNullableFiniteNumber(value.lastContextTokens)
+    && isOptionalNullableFiniteNumber(value.lastContextPercent)
+    && isOptionalNullableFiniteNumber(value.lastContextWindow)
+    && isOptionalSystemHintStateRecord(value.systemHintState);
+}
+
+function isOptionalArray(value: unknown): boolean {
+  return value === undefined || Array.isArray(value);
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isNullableFiniteNumber(value: unknown): value is number | null {
+  return value === null || isFiniteNumber(value);
+}
+
+function isOptionalNullableFiniteNumber(value: unknown): boolean {
+  return value === undefined || isNullableFiniteNumber(value);
+}
+
+function isSystemHintStateRecord(value: unknown): value is SystemHintState {
+  return isRecord(value)
+    && typeof value.appliedOnce === "boolean"
+    && (typeof value.lastAppliedText === "string" || value.lastAppliedText === null);
+}
+
+function isOptionalSystemHintStateRecord(value: unknown): boolean {
+  return value === undefined || isSystemHintStateRecord(value);
 }
 
 function createSystemHintState(): SystemHintState {

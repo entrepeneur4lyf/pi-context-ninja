@@ -109,6 +109,53 @@ describe("index-store", () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
+  it("skips parseable but invalid JSONL object lines while keeping valid entries on both sides", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-index-"));
+    const filePath = path.join(tmpDir, "idx.jsonl");
+
+    const firstEntry = {
+      turnRange: "1-2",
+      topic: "setup",
+      summary: "first",
+      timestamp: 1,
+      messageCount: 2,
+      indexedAt: 11,
+    };
+    const invalidEntry = {
+      turnRange: "2-3",
+      topic: "broken",
+      summary: "missing numeric fields",
+    };
+    const secondEntry = {
+      turnRange: "3-4",
+      topic: "auth",
+      summary: "second",
+      timestamp: 2,
+      messageCount: 2,
+      indexedAt: 22,
+    };
+
+    fs.writeFileSync(
+      filePath,
+      `${JSON.stringify(firstEntry)}\n${JSON.stringify(invalidEntry)}\n${JSON.stringify(secondEntry)}\n`,
+      "utf8",
+    );
+
+    expect(() => readIndexEntries(filePath)).not.toThrow();
+    expect(readIndexEntries(filePath)).toEqual([
+      {
+        ...firstEntry,
+        pruneTargets: [],
+      },
+      {
+        ...secondEntry,
+        pruneTargets: [],
+      },
+    ]);
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
   it("does not create prune targets when no tool results are present", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-index-manager-"));
     process.env.PCN_INDEX_DIR = tmpDir;

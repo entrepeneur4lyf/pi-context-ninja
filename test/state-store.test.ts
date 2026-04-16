@@ -126,6 +126,28 @@ describe("state store", () => {
     expect(loadSessionState("corrupt")).toBeNull();
   });
 
+  it("returns null and quarantines parseable but structurally invalid session state", async () => {
+    const { loadSessionState, getStatePath } = await loadStateStore();
+    const statePath = getStatePath("invalid-structure");
+
+    fs.writeFileSync(
+      statePath,
+      JSON.stringify({
+        currentTurn: "wrong-type",
+        projectPath: 42,
+        turnHistory: "wrong-type",
+      }),
+      "utf8",
+    );
+
+    expect(() => loadSessionState("invalid-structure")).not.toThrow();
+    expect(loadSessionState("invalid-structure")).toBeNull();
+    expect(fs.existsSync(statePath)).toBe(false);
+
+    const quarantined = fs.readdirSync(stateDir).filter((entry) => entry.startsWith("invalid-structure.json.corrupt."));
+    expect(quarantined).toHaveLength(1);
+  });
+
   it("writes atomically without leaving a tmp file behind", async () => {
     const { saveSessionState, getStatePath } = await loadStateStore();
     const s = createSessionState("/tmp");

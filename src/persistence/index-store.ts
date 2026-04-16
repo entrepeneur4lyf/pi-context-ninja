@@ -70,5 +70,18 @@ export function readIndexEntries(filePath: string): IndexEntry[] {
 }
 
 function isIndexEntryRecord(value: unknown): value is Omit<IndexEntry, "pruneTargets"> & { pruneTargets?: unknown } {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return false;
+  }
+
+  const entry = value as Record<string, unknown>;
+  return typeof entry.turnRange === "string"
+    && typeof entry.topic === "string"
+    && typeof entry.summary === "string"
+    && typeof entry.timestamp === "number"
+    && Number.isFinite(entry.timestamp)
+    && typeof entry.messageCount === "number"
+    && Number.isFinite(entry.messageCount)
+    && typeof entry.indexedAt === "number"
+    && Number.isFinite(entry.indexedAt);
 }
