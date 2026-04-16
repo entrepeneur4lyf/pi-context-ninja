@@ -107,11 +107,15 @@ function resolveContextTokens(state: SessionState, ctx: { getContextUsage(): { t
 type ToolResultLike = Pick<ToolResultMessage, "toolCallId" | "toolName" | "content" | "isError">;
 
 function resolveHistoricalTurnIndex(state: SessionState): number {
-  const earliestTurnIndex = state.turnHistory.reduce<number>(
-    (min, snapshot) => Math.min(min, snapshot.turnIndex),
-    Number.POSITIVE_INFINITY,
+  if (state.currentTurn >= 0) {
+    return state.currentTurn - 1;
+  }
+
+  const latestTurnIndex = state.turnHistory.reduce<number>(
+    (max, snapshot) => Math.max(max, snapshot.turnIndex),
+    Number.NEGATIVE_INFINITY,
   );
-  return Number.isFinite(earliestTurnIndex) ? earliestTurnIndex : 0;
+  return Number.isFinite(latestTurnIndex) ? latestTurnIndex : 0;
 }
 
 function syncToolRecord(

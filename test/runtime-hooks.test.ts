@@ -1085,7 +1085,7 @@ describe("runtime hook registration", () => {
     expect(readIndexEntries(getIndexPath("/tmp/project"))).toEqual([]);
   });
 
-  it("rebuilds missing tool records from context messages so historical sessions still age stale errors and index old results", async () => {
+  it("rebuilds missing tool records from context messages using a freshness-biased turn so historical sessions do not age fresh results as stale", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;
     config.dashboard.enabled = false;
@@ -1161,10 +1161,7 @@ describe("runtime hook registration", () => {
     ) as { messages?: Array<{ content: Array<{ type: string; text?: string }> }> } | undefined;
 
     expect(contextResult?.messages?.[0]?.content).toEqual([
-      {
-        type: "text",
-        text: `[Error output removed -- tool failed more than ${config.strategies.errorPurge.maxTurnsAgo} turns ago]`,
-      },
+      { type: "text", text: "boom" },
     ]);
 
     await calls.get("agent_end")?.(
@@ -1197,7 +1194,7 @@ describe("runtime hook registration", () => {
         expect.objectContaining({
           toolName: "read",
           isError: true,
-          turnIndex: 0,
+          turnIndex: 8,
         }),
       ],
       [
@@ -1205,12 +1202,108 @@ describe("runtime hook registration", () => {
         expect.objectContaining({
           toolName: "read",
           isError: false,
-          turnIndex: 0,
+          turnIndex: 8,
         }),
       ],
     ]);
-    expect(persisted?.pruneTargets).toHaveLength(1);
-    expect(readIndexEntries(getIndexPath("/tmp/project"))).toHaveLength(1);
+    expect(persisted?.pruneTargets).toEqual([]);
+    expect(readIndexEntries(getIndexPath("/tmp/project"))).toHaveLength(0);
+  });
+
+  it("uses the newest historical turn when currentTurn is missing and still rebuilds tool records safely", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = false;
+    config.dashboard.enabled = false;
+    config.backgroundIndexing.enabled = true;
+    config.backgroundIndexing.minRangeTurns = 1;
+    config.strategies.shortCircuit.enabled = false;
+    config.strategies.codeFilter.enabled = false;
+    config.strategies.truncation.enabled = false;
+    config.strategies.errorPurge.enabled = false;
+    config.strategies.deduplication.enabled = false;
+
+    const sessionId = "session-rebuild-legacy-current-turn";
+    writeLegacyState(sessionId, {
+      toolCalls: [],
+      prunedToolIds: [],
+      pruneTargets: [],
+      lastIndexedTurn: -1,
+      tokensKeptOutTotal: 0,
+      tokensSaved: 0,
+      tokensKeptOutByType: {},
+      tokensSavedByType: {},
+      currentTurn: -1,
+      countedSavingsIds: [],
+      turnHistory: [
+        {
+          turnIndex: 2,
+          toolCount: 1,
+          messageCountAfterTurn: 3,
+          tokensKeptOutDelta: 0,
+          tokensSavedDelta: 0,
+          timestamp: 111,
+        },
+        {
+          turnIndex: 7,
+          toolCount: 1,
+          messageCountAfterTurn: 7,
+          tokensKeptOutDelta: 0,
+          tokensSavedDelta: 0,
+          timestamp: 222,
+        },
+      ],
+      projectPath: "/tmp/project",
+      lastContextTokens: null,
+      lastContextPercent: null,
+      lastContextWindow: null,
+    });
+
+    const { calls, pi } = createPiMock();
+    createExtensionRuntime(pi, config);
+
+    const ctx = createContext(sessionId);
+    await calls.get("context")?.(
+      {
+        messages: [
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "fresh result" }],
+            toolName: "read",
+            isError: false,
+            toolCallId: "legacy-fresh",
+          },
+        ],
+      },
+      ctx,
+    );
+
+    await calls.get("agent_end")?.(
+      {
+        messages: [
+          {
+            role: "toolResult",
+            content: [{ type: "text", text: "fresh result" }],
+            toolName: "read",
+            isError: false,
+            toolCallId: "legacy-fresh",
+          },
+        ],
+      },
+      ctx,
+    );
+
+    const { loadSessionState } = await loadStateStore();
+    const persisted = loadSessionState(sessionId);
+    expect(persisted?.toolCalls).toEqual([
+      [
+        "legacy-fresh",
+        expect.objectContaining({
+          turnIndex: 7,
+        }),
+      ],
+    ]);
+    expect(persisted?.pruneTargets).toEqual([]);
+    expect(readIndexEntries(getIndexPath("/tmp/project"))).toEqual([]);
   });
 
   it("applies immediate safe tool_result shaping only to successful single-text results", async () => {
