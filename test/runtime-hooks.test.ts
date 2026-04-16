@@ -487,6 +487,92 @@ describe("runtime hook registration", () => {
     );
   });
 
+  it.each(["", " ", "\n\t "])(
+    "passes through gated runtime hooks when cwd is blank (%p)",
+    async (cwd) => {
+      const config = defaultConfig();
+      config.analytics.enabled = true;
+      config.analytics.dbPath = path.join(stateDir, "analytics-blank-cwd.sqlite");
+      config.dashboard.enabled = true;
+      config.systemHint.enabled = true;
+      config.systemHint.text = "Keep the context small.";
+
+      const { calls, pi } = createPiMock();
+      createExtensionRuntime(pi, config);
+
+      const sessionId = `session-blank-cwd-${Buffer.from(cwd).toString("hex")}`;
+      const ctx = createContext(sessionId, cwd);
+      const messages = [{ role: "assistant", content: "hello" }] as const;
+
+      const toolResult = await calls.get("tool_result")?.(
+        {
+          type: "tool_result",
+          toolCallId: "call-blank",
+          toolName: "read",
+          content: [{ type: "text", text: "body" }],
+          isError: false,
+        },
+        ctx,
+      );
+
+      const contextResult = await calls.get("context")?.(
+        {
+          type: "context",
+          messages: [...messages],
+        },
+        ctx,
+      );
+
+      const beforeAgentStartResult = await calls.get("before_agent_start")?.(
+        {
+          type: "before_agent_start",
+          prompt: "question",
+          images: undefined,
+          systemPrompt: "base",
+        },
+        ctx,
+      );
+
+      const sessionBeforeCompactResult = await calls.get("session_before_compact")?.(
+        {
+          type: "session_before_compact",
+          preparation: { type: "compaction" },
+        },
+        ctx,
+      );
+
+      const agentEndResult = await calls.get("agent_end")?.(
+        {
+          type: "agent_end",
+          messages: [
+            { role: "user", content: [{ type: "text", text: "question" }] },
+            { role: "assistant", content: "answer" },
+          ],
+        },
+        ctx,
+      );
+
+      await calls.get("turn_end")?.(
+        {
+          type: "turn_end",
+          turnIndex: 0,
+          message: { role: "assistant", content: "done" },
+          toolResults: [],
+        },
+        ctx,
+      );
+
+      const { loadSessionState } = await loadStateStore();
+
+      expect(toolResult).toBeUndefined();
+      expect(contextResult).toEqual({ messages });
+      expect(beforeAgentStartResult).toBeUndefined();
+      expect(sessionBeforeCompactResult).toBeUndefined();
+      expect(agentEndResult).toBeUndefined();
+      expect(loadSessionState(sessionId)).toBeNull();
+    },
+  );
+
   it("applies the system hint only once per session when frequency is once_per_session", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;

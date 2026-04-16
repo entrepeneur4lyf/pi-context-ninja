@@ -106,8 +106,18 @@ describe("project control state", () => {
       expect(() => enableProject(projectPath)).toThrow("Project path must be a non-blank string.");
       expect(() => disableProjectDashboard(projectPath)).toThrow("Project path must be a non-blank string.");
       expect(() => enableProjectDashboard(projectPath)).toThrow("Project path must be a non-blank string.");
-      expect(() => isProjectEnabled(projectPath)).toThrow("Project path must be a non-blank string.");
-      expect(() => isProjectDashboardEnabled(projectPath)).toThrow("Project path must be a non-blank string.");
+      expect(isProjectEnabled(projectPath)).toBe(false);
+      expect(isProjectDashboardEnabled(projectPath)).toBe(false);
+    }
+  });
+
+  it("treats blank cwd values as passthrough in the runtime gate", () => {
+    expect(isProjectEnabled()).toBe(false);
+    expect(isProjectDashboardEnabled()).toBe(false);
+
+    for (const projectPath of ["", " ", "\n\t "]) {
+      expect(isProjectEnabled(projectPath)).toBe(false);
+      expect(isProjectDashboardEnabled(projectPath)).toBe(false);
     }
   });
 });
