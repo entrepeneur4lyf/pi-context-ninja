@@ -10,6 +10,7 @@ import { defaultConfig } from "../src/config.js";
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { startDashboardServer } from "../src/dashboard/server.js";
 import { renderDashboardPage } from "../src/dashboard/pages.js";
+import { createAnalyticsStore } from "../src/analytics/store.js";
 
 let tmpDir = "";
 
@@ -431,6 +432,69 @@ describe("dashboard server", () => {
 });
 
 describe("runtime integration", () => {
+  it("records analytics but does not publish when only dashboard is disabled for the project", async () => {
+    const probe = http.createServer();
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+    const address = probe.address();
+    if (!address || typeof address === "string") {
+      throw new Error("expected a bound probe port");
+    }
+    const port = address.port;
+    await new Promise<void>((resolve, reject) => probe.close((error) => (error ? reject(error) : resolve())));
+
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-dashboard-disabled-"));
+    fs.mkdirSync(path.join(projectDir, ".pi", ".pi-ninja"), { recursive: true });
+    fs.writeFileSync(path.join(projectDir, ".pi", ".pi-ninja", ".pcn_dashboard_disabled"), "", "utf8");
+
+    const piCalls = new Map<string, (...args: any[]) => unknown>();
+    const pi = {
+      on: vi.fn((name: string, handler: (...args: any[]) => unknown) => {
+        piCalls.set(name, handler);
+      }),
+    } as unknown as ExtensionAPI;
+
+    const config = defaultConfig();
+    config.analytics.enabled = true;
+    config.analytics.dbPath = path.join(tmpDir, "analytics-dashboard-disabled.sqlite");
+    config.dashboard.enabled = true;
+    config.dashboard.port = port;
+    config.dashboard.bindHost = "127.0.0.1";
+
+    try {
+      createExtensionRuntime(pi, config);
+
+      const ctx = {
+        cwd: projectDir,
+        sessionManager: {
+          getSessionId: () => "session-dashboard-disabled",
+          getEntries: () => [{ id: "m1" }, { id: "m2" }, { id: "m3" }],
+        },
+        getContextUsage: () => ({ tokens: 420, percent: 0.42, contextWindow: 1000 }),
+      } as any;
+
+      await piCalls.get("turn_end")?.(
+        {
+          turnIndex: 0,
+          message: { role: "assistant", content: "done" },
+          toolResults: [],
+        },
+        ctx,
+      );
+
+      const analyticsStore = createAnalyticsStore({ dbPath: config.analytics.dbPath });
+      const snapshot = analyticsStore.getSnapshot("session-dashboard-disabled");
+      analyticsStore.close();
+
+      expect(snapshot.totalTurns).toBe(1);
+      expect(snapshot.context.tokens).toBe(420);
+
+      await expect(fetch(`http://127.0.0.1:${port}/snapshot?sessionId=session-dashboard-disabled`)).rejects.toThrow();
+      await piCalls.get("session_shutdown")?.({}, ctx);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it("initializes analytics and dashboard once, records turn analytics, and shuts down cleanly", async () => {
     const probe = http.createServer();
     await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));

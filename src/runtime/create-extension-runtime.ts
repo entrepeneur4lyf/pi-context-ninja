@@ -21,6 +21,7 @@ import {
   replaceExclusiveToolText,
 } from "../messages.js";
 import { applySafeToolTextShaping } from "../strategies/safe-shaping.js";
+import { isProjectDashboardEnabled, isProjectEnabled } from "../control/runtime-gate.js";
 
 const sessionMap = new Map<string, SessionState>();
 const analyticsStoresBySession = new Map<string, AnalyticsStore>();
@@ -303,6 +304,10 @@ async function recordTurnAnalyticsSafely(
       return;
     }
 
+    if (!isProjectDashboardEnabled(state.projectPath)) {
+      return;
+    }
+
     const dashboardServer = await ensureDashboardServer(sessionId, config);
     if (dashboardServer) {
       dashboardServer.publish(sessionId, snapshot);
@@ -369,8 +374,16 @@ async function releaseSessionResources(sessionId: string): Promise<void> {
   }
 }
 
+function isDataPlaneEnabled(projectPath?: string): boolean {
+  return isProjectEnabled(projectPath);
+}
+
 export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): void {
   pi.on("tool_call", (event, ctx) => {
+    if (!isDataPlaneEnabled(ctx.cwd)) {
+      return;
+    }
+
     const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId, ctx.cwd);
     getOrCreateToolRecord(
@@ -387,6 +400,10 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
   });
 
   pi.on("tool_result", (event, ctx) => {
+    if (!isDataPlaneEnabled(ctx.cwd)) {
+      return undefined;
+    }
+
     const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId, ctx.cwd);
     const record = syncToolRecord(state, event, state.currentTurn, {
@@ -403,6 +420,10 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
   });
 
   pi.on("context", async (event, ctx) => {
+    if (!isDataPlaneEnabled(ctx.cwd)) {
+      return { messages: event.messages };
+    }
+
     const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId, ctx.cwd);
     rebuildToolRecordsFromMessages(state, event.messages);
@@ -414,6 +435,10 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
   });
 
   pi.on("turn_end", async (event, ctx) => {
+    if (!isDataPlaneEnabled(ctx.cwd)) {
+      return;
+    }
+
     const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId, ctx.cwd);
 
@@ -473,6 +498,10 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
   });
 
   pi.on("before_agent_start", (event, ctx) => {
+    if (!isDataPlaneEnabled(ctx.cwd)) {
+      return undefined;
+    }
+
     if (!config.systemHint.enabled) {
       return undefined;
     }
@@ -511,12 +540,20 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
   pi.on("before_provider_request", (event) => event.payload);
 
   pi.on("session_before_compact", (event, ctx) => {
+    if (!isDataPlaneEnabled(ctx.cwd)) {
+      return undefined;
+    }
+
     const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId, ctx.cwd);
     return buildNativeCompactionResult(sessionId, state, config, ctx, event.preparation);
   });
 
   pi.on("agent_end", (event, ctx) => {
+    if (!isDataPlaneEnabled(ctx.cwd)) {
+      return;
+    }
+
     const sessionId = resolveSessionId(ctx);
     const state = getState(sessionId, ctx.cwd);
     rebuildToolRecordsFromMessages(state, event.messages);

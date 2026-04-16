@@ -446,6 +446,82 @@ describe("runtime hook registration", () => {
     expect(payload).toEqual({ provider: "openai", body: { model: "gpt-5.4" } });
   });
 
+  it("passes through data-plane hooks and skips bookkeeping when the project is disabled", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = true;
+    config.analytics.dbPath = path.join(stateDir, "analytics-disabled.sqlite");
+    config.dashboard.enabled = true;
+
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-disabled-project-"));
+    fs.mkdirSync(path.join(projectDir, ".pi", ".pi-ninja"), { recursive: true });
+    fs.writeFileSync(path.join(projectDir, ".pi", ".pi-ninja", ".pcn_disabled"), "", "utf8");
+
+    try {
+      const { calls, pi } = createPiMock();
+      createExtensionRuntime(pi, config);
+
+      const ctx = createContext("session-disabled", projectDir);
+
+      calls.get("tool_call")?.(
+        {
+          toolCallId: "call-disabled",
+          toolName: "read",
+          input: { path: "README.md" },
+        },
+        ctx,
+      );
+
+      const toolResult = await calls.get("tool_result")?.(
+        {
+          type: "tool_result",
+          toolCallId: "call-disabled",
+          toolName: "read",
+          content: [{ type: "text", text: "{\"status\":\"ok\"}" }],
+          isError: false,
+        },
+        ctx,
+      );
+
+      expect(toolResult).toBeUndefined();
+
+      const messages = [
+        {
+          role: "toolResult",
+          content: [{ type: "text", text: "body" }],
+          toolName: "read",
+          isError: false,
+          toolCallId: "call-disabled",
+        },
+      ] as const;
+
+      const contextResult = await calls.get("context")?.(
+        {
+          type: "context",
+          messages: [...messages],
+        },
+        ctx,
+      );
+
+      expect(contextResult).toEqual({ messages });
+
+      await calls.get("turn_end")?.(
+        {
+          type: "turn_end",
+          turnIndex: 0,
+          message: { role: "assistant", content: "done" },
+          toolResults: [],
+        },
+        ctx,
+      );
+
+      const { loadSessionState } = await loadStateStore();
+      expect(loadSessionState("session-disabled")).toBeNull();
+      expect(fs.existsSync(config.analytics.dbPath)).toBe(false);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it("does not expand already shortened tool results during background pruning", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;
