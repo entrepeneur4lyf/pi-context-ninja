@@ -518,6 +518,107 @@ describe("runtime integration", () => {
     },
   );
 
+  it.each(["disable", "disable dashboard"])(
+    "revokes all published dashboard snapshots for the same project when `/pcn %s` runs",
+    async (command) => {
+      const port = await getAvailablePort();
+      const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-command-disable-dashboard-project-"));
+      const configPath = path.join(projectDir, "pcn-config.yaml");
+      fs.writeFileSync(
+        configPath,
+        [
+          "analytics:",
+          "  enabled: true",
+          `  dbPath: ${JSON.stringify(path.join(tmpDir, `${command.replace(/\s+/g, "-")}.sqlite`))}`,
+          "dashboard:",
+          "  enabled: true",
+          `  port: ${port}`,
+          '  bindHost: "127.0.0.1"',
+        ].join("\n"),
+        "utf8",
+      );
+      process.env.PCN_CONFIG_PATH = configPath;
+
+      const piCalls = new Map<string, (...args: any[]) => unknown>();
+      const commands = new Map<string, { handler: (...args: any[]) => unknown }>();
+      const pi = {
+        on: vi.fn((name: string, handler: (...args: any[]) => unknown) => {
+          piCalls.set(name, handler);
+        }),
+        registerCommand: vi.fn((name: string, options: { handler: (...args: any[]) => unknown }) => {
+          commands.set(name, options);
+        }),
+      } as unknown as ExtensionAPI;
+
+      const ctxA = {
+        cwd: projectDir,
+        sessionManager: {
+          getSessionId: () => `session-project-a-${command.replace(/\s+/g, "-")}`,
+          getEntries: () => [{ id: "m1" }, { id: "m2" }, { id: "m3" }],
+        },
+        getContextUsage: () => ({ tokens: 420, percent: 0.42, contextWindow: 1000 }),
+        ui: { notify: vi.fn() },
+      } as any;
+      const ctxB = {
+        cwd: projectDir,
+        sessionManager: {
+          getSessionId: () => `session-project-b-${command.replace(/\s+/g, "-")}`,
+          getEntries: () => [{ id: "m1" }, { id: "m2" }, { id: "m3" }],
+        },
+        getContextUsage: () => ({ tokens: 360, percent: 0.36, contextWindow: 1000 }),
+        ui: { notify: vi.fn() },
+      } as any;
+
+      let runtimeStarted = false;
+
+      try {
+        registerExtension(pi);
+        runtimeStarted = true;
+
+        await piCalls.get("turn_end")?.(
+          {
+            turnIndex: 0,
+            message: { role: "assistant", content: "first turn" },
+            toolResults: [],
+          },
+          ctxA,
+        );
+        await piCalls.get("turn_end")?.(
+          {
+            turnIndex: 1,
+            message: { role: "assistant", content: "second turn" },
+            toolResults: [],
+          },
+          ctxB,
+        );
+
+        const firstSnapshot = await fetch(
+          `http://127.0.0.1:${port}/snapshot?sessionId=${ctxA.sessionManager.getSessionId()}`,
+        ).then((res) => res.json());
+        const secondSnapshot = await fetch(
+          `http://127.0.0.1:${port}/snapshot?sessionId=${ctxB.sessionManager.getSessionId()}`,
+        ).then((res) => res.json());
+        expect(firstSnapshot.totalTurns).toBe(1);
+        expect(secondSnapshot.totalTurns).toBe(1);
+
+        await commands.get("pcn")?.handler(command, ctxA);
+
+        await expect(
+          fetch(`http://127.0.0.1:${port}/snapshot?sessionId=${ctxA.sessionManager.getSessionId()}`),
+        ).rejects.toThrow();
+        await expect(
+          fetch(`http://127.0.0.1:${port}/snapshot?sessionId=${ctxB.sessionManager.getSessionId()}`),
+        ).rejects.toThrow();
+      } finally {
+        if (runtimeStarted) {
+          await piCalls.get("session_shutdown")?.({}, ctxA);
+          await piCalls.get("session_shutdown")?.({}, ctxB);
+        }
+        fs.rmSync(projectDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("clears a previously published dashboard snapshot after the project is disabled on a later turn", async () => {
     const port = await getAvailablePort();
 

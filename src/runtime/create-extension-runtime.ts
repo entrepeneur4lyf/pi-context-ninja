@@ -46,6 +46,7 @@ const DASHBOARD_RUNTIME_DEGRADED_REASON_KEY = "dashboard-bind";
 
 export interface ExtensionRuntimeControls {
   revokeDashboardSession: (sessionId: string) => Promise<void>;
+  revokeProjectDashboardSessions: (projectPath: string) => Promise<void>;
 }
 
 function getState(sessionId: string, projectPath?: string): SessionState {
@@ -58,6 +59,9 @@ function getState(sessionId: string, projectPath?: string): SessionState {
       state = createSessionState(projectPath ?? sessionId);
     }
     sessionMap.set(sessionId, state);
+  }
+  if (typeof projectPath === "string" && projectPath.length > 0 && state.projectPath !== projectPath) {
+    state.projectPath = projectPath;
   }
   return state;
 }
@@ -408,6 +412,21 @@ async function revokeDashboardSession(sessionId: string, runtimeHealth?: Command
   }
 }
 
+async function revokeProjectDashboardSessions(
+  projectPath: string,
+  runtimeHealth?: CommandRuntimeHealth,
+): Promise<void> {
+  const sessionIds = [...dashboardRuntime.activeSessions];
+  for (const sessionId of sessionIds) {
+    const state = sessionMap.get(sessionId);
+    if (state?.projectPath !== projectPath) {
+      continue;
+    }
+
+    await revokeDashboardSession(sessionId, runtimeHealth);
+  }
+}
+
 async function releaseSessionResources(sessionId: string, runtimeHealth?: CommandRuntimeHealth): Promise<void> {
   evictAnalyticsStore(sessionId);
   await revokeDashboardSession(sessionId, runtimeHealth);
@@ -618,5 +637,8 @@ export function createExtensionRuntime(
 
   return {
     revokeDashboardSession: async (sessionId: string) => revokeDashboardSession(sessionId, runtimeHealth),
+    revokeProjectDashboardSessions: async (projectPath: string) => {
+      await revokeProjectDashboardSessions(projectPath, runtimeHealth);
+    },
   };
 }

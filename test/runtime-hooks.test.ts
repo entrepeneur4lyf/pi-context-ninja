@@ -198,6 +198,80 @@ describe("runtime hook registration", () => {
     },
   );
 
+  it.each(["disable", "disable dashboard"])(
+    "revokes all active dashboard sessions for the same project when `/pcn %s` runs",
+    async (command) => {
+      const dashboardHandle = {
+        ready: Promise.resolve(),
+        close: vi.fn(async () => {}),
+        clearSession: vi.fn(),
+        publish: vi.fn(),
+      };
+      const startDashboardServerMock = vi.fn(() => dashboardHandle);
+
+      vi.resetModules();
+      vi.doMock("../src/dashboard/server.js", () => ({
+        startDashboardServer: startDashboardServerMock,
+      }));
+
+      const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-project-command-revoke-all-"));
+      const sessionA = `session-a-${command.replace(/\s+/g, "-")}`;
+      const sessionB = `session-b-${command.replace(/\s+/g, "-")}`;
+      const ctxA = {
+        ...createContext(sessionA, projectDir),
+        ui: {
+          notify: vi.fn(),
+        },
+      } as any;
+      const ctxB = {
+        ...createContext(sessionB, projectDir),
+        ui: {
+          notify: vi.fn(),
+        },
+      } as any;
+
+      try {
+        const { default: registerExtensionWithMockedDashboard } = await import("../src/index.js");
+        const { commands, calls, pi } = createPiMock();
+        registerExtensionWithMockedDashboard(pi);
+
+        await calls.get("turn_end")?.(
+          {
+            turnIndex: 0,
+            message: { role: "assistant", content: "first turn" },
+            toolResults: [],
+          },
+          ctxA,
+        );
+        await calls.get("turn_end")?.(
+          {
+            turnIndex: 1,
+            message: { role: "assistant", content: "second turn" },
+            toolResults: [],
+          },
+          ctxB,
+        );
+
+        expect(startDashboardServerMock).toHaveBeenCalledTimes(1);
+
+        dashboardHandle.clearSession.mockClear();
+        dashboardHandle.close.mockClear();
+
+        await commands.get("pcn")?.handler(command, ctxA);
+
+        expect(dashboardHandle.clearSession).toHaveBeenCalledTimes(2);
+        expect(dashboardHandle.clearSession).toHaveBeenCalledWith(sessionA);
+        expect(dashboardHandle.clearSession).toHaveBeenCalledWith(sessionB);
+        expect(dashboardHandle.close).toHaveBeenCalledTimes(1);
+      } finally {
+        await Promise.resolve();
+        vi.doUnmock("../src/dashboard/server.js");
+        vi.resetModules();
+        fs.rmSync(projectDir, { recursive: true, force: true });
+      }
+    },
+  );
+
   it("keeps /pcn registered when runtime config loading fails during startup", () => {
     const { commands, pi } = createPiMock();
     const brokenConfigPath = path.join(stateDir, "broken-config.yaml");

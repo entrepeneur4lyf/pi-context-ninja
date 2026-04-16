@@ -24,6 +24,9 @@ export default function (pi: ExtensionAPI) {
     revokeDashboardSession: async (sessionId: string) => {
       await runtimeControls?.revokeDashboardSession(sessionId);
     },
+    revokeProjectDashboardSessions: async (projectPath: string) => {
+      await runtimeControls?.revokeProjectDashboardSessions(projectPath);
+    },
   });
 
   try {
