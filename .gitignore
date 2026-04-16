@@ -2,3 +2,5 @@
 node_modules/
 dist/
 docs/superpowers/
+.gitnexus
+.pi/.pi-ninja/
