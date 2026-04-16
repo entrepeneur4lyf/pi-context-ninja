@@ -143,27 +143,33 @@ export function materializeContext(
       const inputFingerprint = typeof toolRecord?.inputFingerprint === "string"
         ? toolRecord.inputFingerprint.trim()
         : "";
-      const fingerprint =
-        (msg as any).__pcnFingerprint
-        ?? (inputFingerprint ? `${normalizedFingerprint}::${inputFingerprint}` : normalizedFingerprint);
-      const candidate = fingerprintDedup(
-        toolCallId,
-        toolName,
-        fingerprint,
-        seen,
-        config.strategies.deduplication.maxOccurrences,
-        config.strategies.deduplication.protectedTools,
-      );
-      if (candidate !== null) {
-        if (canRewriteText) {
-          creditSavings(
-            state,
-            toolCallId,
-            "dedup",
-            Math.max(0, dedupText.length - candidate.length),
-            Math.max(0, dedupText.length - candidate.length),
-          );
-          rewriteText = candidate;
+      const messageFingerprint = (msg as any).__pcnFingerprint;
+      const lacksRebuildProvenance =
+        Boolean(toolRecord?.inferredFromContext) && !inputFingerprint && !messageFingerprint;
+
+      if (!lacksRebuildProvenance) {
+        const fingerprint =
+          messageFingerprint
+          ?? (inputFingerprint ? `${normalizedFingerprint}::${inputFingerprint}` : normalizedFingerprint);
+        const candidate = fingerprintDedup(
+          toolCallId,
+          toolName,
+          fingerprint,
+          seen,
+          config.strategies.deduplication.maxOccurrences,
+          config.strategies.deduplication.protectedTools,
+        );
+        if (candidate !== null) {
+          if (canRewriteText) {
+            creditSavings(
+              state,
+              toolCallId,
+              "dedup",
+              Math.max(0, dedupText.length - candidate.length),
+              Math.max(0, dedupText.length - candidate.length),
+            );
+            rewriteText = candidate;
+          }
         }
       }
     }

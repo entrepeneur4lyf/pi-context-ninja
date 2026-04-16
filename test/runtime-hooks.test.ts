@@ -757,6 +757,68 @@ describe("runtime hook registration", () => {
     expect((persisted?.turnHistory.at(-1)?.tokensKeptOutDelta ?? 0)).toBeGreaterThanOrEqual(keptOut);
   });
 
+  it("does not deduplicate resumed inferred tool results when rebuild lacks input provenance", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = false;
+    config.dashboard.enabled = false;
+    config.backgroundIndexing.enabled = false;
+    config.strategies.shortCircuit.enabled = false;
+    config.strategies.codeFilter.enabled = false;
+    config.strategies.truncation.enabled = false;
+    config.strategies.errorPurge.enabled = false;
+    config.strategies.deduplication.maxOccurrences = 1;
+
+    const { calls, pi } = createPiMock();
+    createExtensionRuntime(pi, config);
+
+    const sessionId = "session-resumed-missing-provenance";
+    const ctx = createContext(sessionId);
+    const messages = [
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: "build 2026-04-14T10:11:12Z abcdefab-cdef-4123-89ab-abcdefabcdef" }],
+        toolName: "read",
+        isError: false,
+        toolCallId: "read-1",
+      },
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: "build 2026-04-15T11:12:13Z 12345678-1234-4123-8234-1234567890ab" }],
+        toolName: "read",
+        isError: false,
+        toolCallId: "read-2",
+      },
+    ];
+
+    const contextResult = await calls.get("context")?.({ messages }, ctx) as
+      | { messages?: Array<{ content: Array<{ type: string; text?: string }> }> }
+      | undefined;
+
+    expect(contextResult?.messages?.[0]?.content[0]?.text).toBe(messages[0].content[0].text);
+    expect(contextResult?.messages?.[1]?.content[0]?.text).toBe(messages[1].content[0].text);
+
+    await calls.get("agent_end")?.({ messages }, ctx);
+
+    const { loadSessionState } = await loadStateStore();
+    const persisted = loadSessionState(sessionId);
+    expect(persisted?.toolCalls).toEqual([
+      [
+        "read-1",
+        expect.objectContaining({
+          inferredFromContext: true,
+          inputFingerprint: "",
+        }),
+      ],
+      [
+        "read-2",
+        expect.objectContaining({
+          inferredFromContext: true,
+          inputFingerprint: "",
+        }),
+      ],
+    ]);
+  });
+
   it("returns a native compaction result from the indexed TOC when enabled", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;
