@@ -141,6 +141,88 @@ describe("runtime hook registration", () => {
     }
   });
 
+  it("keeps /pcn registered when runtime config loading fails during startup", () => {
+    const { commands, pi } = createPiMock();
+    const brokenConfigPath = path.join(stateDir, "broken-config.yaml");
+    fs.writeFileSync(brokenConfigPath, "strategies: [broken", "utf8");
+    process.env.PCN_CONFIG_PATH = brokenConfigPath;
+
+    expect(() => registerExtension(pi)).not.toThrow();
+    expect(commands.has("pcn")).toBe(true);
+  });
+
+  it("reports degraded config state through /pcn status, /pcn doctor, and /pcn export", async () => {
+    const { commands, pi } = createPiMock();
+    const brokenConfigPath = path.join(stateDir, "broken-config.yaml");
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-project-degraded-"));
+    fs.writeFileSync(brokenConfigPath, "strategies: [broken", "utf8");
+    process.env.PCN_CONFIG_PATH = brokenConfigPath;
+    const notify = vi.fn();
+    const ctx = {
+      ...createContext("session-degraded", projectDir),
+      ui: { notify },
+    } as any;
+
+    try {
+      registerExtension(pi);
+
+      await commands.get("pcn")?.handler("status", ctx);
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining("PCN degraded"), "info");
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining("broken-config.yaml"), "info");
+
+      notify.mockClear();
+      await commands.get("pcn")?.handler("doctor", ctx);
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining("Runtime configuration could not be loaded."), "info");
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining("broken-config.yaml"), "info");
+
+      notify.mockClear();
+      await commands.get("pcn")?.handler("export", ctx);
+      const exportMessage = notify.mock.calls[0]?.[0];
+      expect(typeof exportMessage).toBe("string");
+      const reportPath = String(exportMessage).replace("Exported PCN report to ", "");
+      expect(reportPath).toContain(path.join(projectDir, ".pi", ".pi-ninja", "reports"));
+      expect(fs.existsSync(reportPath)).toBe(true);
+      expect(fs.readFileSync(reportPath, "utf8")).toContain("Runtime loaded: no");
+      expect(fs.readFileSync(reportPath, "utf8")).toContain("Runtime configuration could not be loaded.");
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("warns for invalid /pcn arguments", async () => {
+    const { commands, pi } = createPiMock();
+    const notify = vi.fn();
+
+    registerExtension(pi);
+
+    await commands.get("pcn")?.handler("unknown", {
+      ...createContext("session-invalid-args"),
+      ui: { notify },
+    });
+
+    expect(notify).toHaveBeenCalledWith(
+      "Usage: /pcn status|doctor|export|enable|disable|enable dashboard|disable dashboard",
+      "warning",
+    );
+  });
+
+  it("warns when /pcn runs without a project cwd", async () => {
+    const { commands, pi } = createPiMock();
+    const notify = vi.fn();
+
+    registerExtension(pi);
+
+    await commands.get("pcn")?.handler("status", {
+      ...createContext("session-no-cwd", ""),
+      ui: { notify },
+    });
+
+    expect(notify).toHaveBeenCalledWith(
+      "Pi Context Ninja commands require an active project directory.",
+      "warning",
+    );
+  });
+
   it("applies the system hint only once per session when frequency is once_per_session", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;

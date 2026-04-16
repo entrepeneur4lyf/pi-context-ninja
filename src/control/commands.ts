@@ -12,6 +12,20 @@ import { buildProjectStatus } from "./status.js";
 
 const USAGE_MESSAGE = "Usage: /pcn status|doctor|export|enable|disable|enable dashboard|disable dashboard";
 
+export interface CommandRuntimeHealth {
+  configPath: string;
+  runtimeLoaded: boolean;
+  degradedReasons: string[];
+}
+
+export function createCommandRuntimeHealth(): CommandRuntimeHealth {
+  return {
+    configPath: resolveRuntimeConfigPath(),
+    runtimeLoaded: false,
+    degradedReasons: [],
+  };
+}
+
 function parsePcnArgs(args: string): string[] {
   return args.trim().split(/\s+/).filter(Boolean);
 }
@@ -25,44 +39,55 @@ function requireProjectPath(ctx: ExtensionCommandContext): string | null {
   return ctx.cwd;
 }
 
-function notifyStatus(ctx: ExtensionCommandContext, projectPath: string): void {
+function buildStatusMessage(projectPath: string, runtimeHealth: CommandRuntimeHealth): string {
   const status = buildProjectStatus({
     projectPath,
-    configPath: resolveRuntimeConfigPath(),
-    runtimeLoaded: true,
-    degradedReasons: [],
+    configPath: runtimeHealth.configPath,
+    runtimeLoaded: runtimeHealth.runtimeLoaded,
+    degradedReasons: runtimeHealth.degradedReasons,
   });
 
-  ctx.ui.notify(
-    `PCN ${status.mode} for ${status.projectPath}\nDashboard: ${status.dashboardEnabled ? "enabled" : "disabled"}`,
-    "info",
+  const lines = [
+    `PCN ${status.mode} for ${status.projectPath}`,
+    `Config: ${status.configPath}`,
+    `Dashboard: ${status.dashboardEnabled ? "enabled" : "disabled"}`,
+  ];
+
+  if (status.degradedReasons.length > 0) {
+    lines.push(`Degraded: ${status.degradedReasons.join(" | ")}`);
+  }
+
+  return lines.join("\n");
+}
+
+function buildDoctorMessage(projectPath: string, runtimeHealth: CommandRuntimeHealth): string {
+  const report = buildProjectDoctorReport({
+    projectPath,
+    configPath: runtimeHealth.configPath,
+    runtimeLoaded: runtimeHealth.runtimeLoaded,
+    degradedReasons: runtimeHealth.degradedReasons,
+  });
+
+  return [`PCN doctor for ${report.status.projectPath}`, `Config: ${report.status.configPath}`, ...report.findings].join(
+    "\n",
   );
 }
 
-function notifyDoctor(ctx: ExtensionCommandContext, projectPath: string): void {
+function exportDoctorReport(projectPath: string, runtimeHealth: CommandRuntimeHealth): string {
   const report = buildProjectDoctorReport({
     projectPath,
-    configPath: resolveRuntimeConfigPath(),
-    runtimeLoaded: true,
-    degradedReasons: [],
+    configPath: runtimeHealth.configPath,
+    runtimeLoaded: runtimeHealth.runtimeLoaded,
+    degradedReasons: runtimeHealth.degradedReasons,
   });
 
-  ctx.ui.notify(report.findings.join("\n"), "info");
+  return exportProjectDoctorReport({ projectPath, report });
 }
 
-function notifyExport(ctx: ExtensionCommandContext, projectPath: string): void {
-  const report = buildProjectDoctorReport({
-    projectPath,
-    configPath: resolveRuntimeConfigPath(),
-    runtimeLoaded: true,
-    degradedReasons: [],
-  });
-  const reportPath = exportProjectDoctorReport({ projectPath, report });
-
-  ctx.ui.notify(`Exported PCN report to ${reportPath}`, "info");
-}
-
-export function registerProjectControlCommands(pi: ExtensionAPI): void {
+export function registerProjectControlCommands(
+  pi: ExtensionAPI,
+  getRuntimeHealth: () => CommandRuntimeHealth,
+): void {
   pi.registerCommand("pcn", {
     description: "Pi Context Ninja project controls",
     handler: async (args, ctx) => {
@@ -74,17 +99,18 @@ export function registerProjectControlCommands(pi: ExtensionAPI): void {
       const [action, target] = parsePcnArgs(args);
 
       if (action === "status" && target === undefined) {
-        notifyStatus(ctx, projectPath);
+        ctx.ui.notify(buildStatusMessage(projectPath, getRuntimeHealth()), "info");
         return;
       }
 
       if (action === "doctor" && target === undefined) {
-        notifyDoctor(ctx, projectPath);
+        ctx.ui.notify(buildDoctorMessage(projectPath, getRuntimeHealth()), "info");
         return;
       }
 
       if (action === "export" && target === undefined) {
-        notifyExport(ctx, projectPath);
+        const reportPath = exportDoctorReport(projectPath, getRuntimeHealth());
+        ctx.ui.notify(`Exported PCN report to ${reportPath}`, "info");
         return;
       }
 
