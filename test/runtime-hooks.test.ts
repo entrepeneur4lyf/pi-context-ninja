@@ -24,13 +24,17 @@ function writeLegacyState(sessionId: string, state: Record<string, unknown>): vo
 
 function createPiMock() {
   const calls = new Map<string, (...args: unknown[]) => unknown>();
+  const commands = new Map<string, { handler: (...args: unknown[]) => unknown }>();
   const pi = {
     on: vi.fn((name: string, handler: (...args: unknown[]) => unknown) => {
       calls.set(name, handler);
     }),
+    registerCommand: vi.fn((name: string, options: { handler: (...args: unknown[]) => unknown }) => {
+      commands.set(name, options);
+    }),
   } as unknown as ExtensionAPI;
 
-  return { calls, pi };
+  return { calls, commands, pi };
 }
 
 function createContext(sessionId: string, cwd = "/tmp/project") {
@@ -73,6 +77,7 @@ describe("runtime hook registration", () => {
       on: vi.fn((name: string, handler: (...args: unknown[]) => unknown) => {
         calls.push([name, handler]);
       }),
+      registerCommand: vi.fn(),
     } as unknown as ExtensionAPI;
 
     registerExtension(pi);
@@ -90,6 +95,50 @@ describe("runtime hook registration", () => {
     ]);
     expect(calls).toHaveLength(9);
     expect(calls.every(([, handler]) => typeof handler === "function")).toBe(true);
+  });
+
+  it("registers the /pcn command surface", () => {
+    const { pi } = createPiMock();
+
+    registerExtension(pi);
+
+    expect((pi as any).registerCommand).toHaveBeenCalledTimes(1);
+    expect((pi as any).registerCommand).toHaveBeenCalledWith(
+      "pcn",
+      expect.objectContaining({
+        description: expect.stringContaining("Pi Context Ninja"),
+        handler: expect.any(Function),
+      }),
+    );
+  });
+
+  it("toggles project-local markers through /pcn subcommands", async () => {
+    const { commands, pi } = createPiMock();
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-project-control-"));
+    const ctx = {
+      ...createContext("session-commands", projectDir),
+      ui: {
+        notify: vi.fn(),
+      },
+    } as any;
+
+    try {
+      registerExtension(pi);
+
+      await commands.get("pcn")?.handler("disable", ctx);
+      expect(fs.existsSync(path.join(projectDir, ".pi", ".pi-ninja", ".pcn_disabled"))).toBe(true);
+
+      await commands.get("pcn")?.handler("enable", ctx);
+      expect(fs.existsSync(path.join(projectDir, ".pi", ".pi-ninja", ".pcn_disabled"))).toBe(false);
+
+      await commands.get("pcn")?.handler("disable dashboard", ctx);
+      expect(fs.existsSync(path.join(projectDir, ".pi", ".pi-ninja", ".pcn_dashboard_disabled"))).toBe(true);
+
+      await commands.get("pcn")?.handler("enable dashboard", ctx);
+      expect(fs.existsSync(path.join(projectDir, ".pi", ".pi-ninja", ".pcn_dashboard_disabled"))).toBe(false);
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
   });
 
   it("applies the system hint only once per session when frequency is once_per_session", async () => {
