@@ -137,7 +137,9 @@ export function materializeContext(
 
     if (config.strategies.deduplication.enabled) {
       const normalizedFingerprint = `${toolName}::${normalizeContent(dedupText)}`;
-      const inputFingerprint = toolRecord?.inputFingerprint.trim();
+      const inputFingerprint = typeof toolRecord?.inputFingerprint === "string"
+        ? toolRecord.inputFingerprint.trim()
+        : "";
       const fingerprint =
         (msg as any).__pcnFingerprint
         ?? (inputFingerprint ? `${normalizedFingerprint}::${inputFingerprint}` : normalizedFingerprint);

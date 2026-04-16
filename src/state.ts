@@ -151,7 +151,8 @@ export function normalizePersistedSessionState(input: unknown): PersistedSession
 
 // Private stable stringify helper
 function stableStringify(value: unknown): string {
-  return JSON.stringify(value, getSortedKeysReplacer());
+  const serialized = JSON.stringify(value, getSortedKeysReplacer());
+  return typeof serialized === "string" ? serialized : "";
 }
 
 function serializeToolRecord(record: ToolRecord): ToolRecord {

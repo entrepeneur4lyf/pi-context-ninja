@@ -491,4 +491,26 @@ describe("materialize", () => {
     expect((result.messages as any)[0].content[0].text).toContain("build");
     expect((result.messages as any)[1].content[0].text).toBe("[dedup: see earlier read result x1]");
   });
+
+  it("does not crash when a rebuilt tool record has an undefined fingerprint", () => {
+    const state = createSessionState("/tmp");
+    const cfg = defaultConfig();
+    cfg.strategies.deduplication.maxOccurrences = 1;
+
+    getOrCreateToolRecord(state, "t1", "read", undefined, false, 0);
+
+    const msgs = [
+      {
+        role: "toolResult",
+        content: [{ type: "text", text: "build 2026-04-16T10:11:12Z abcdefab-cdef-4123-89ab-abcdefabcdef" }],
+        toolName: "read",
+        isError: false,
+        toolCallId: "t1",
+        _key: "t1",
+      },
+    ] as any;
+
+    expect(() => materializeContext(msgs, { state, config: cfg })).not.toThrow();
+    expect(state.toolCalls.get("t1")?.inputFingerprint).toBe("");
+  });
 });

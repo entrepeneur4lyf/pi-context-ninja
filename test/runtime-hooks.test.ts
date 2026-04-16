@@ -634,7 +634,7 @@ describe("runtime hook registration", () => {
       {
         toolCallId: "read-2",
         toolName: "read",
-        input: { path: "README-copy.md" },
+        input: { path: "README.md" },
       },
       ctx,
     );
