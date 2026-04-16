@@ -1,6 +1,10 @@
 import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import { loadRuntimeConfig, resolveRuntimeConfigPath } from "./config.js";
-import { createCommandRuntimeHealth, registerProjectControlCommands } from "./control/commands.js";
+import {
+  createCommandRuntimeHealth,
+  registerProjectControlCommands,
+  replaceCommandRuntimeDegradedReasons,
+} from "./control/commands.js";
 import { createExtensionRuntime } from "./runtime/create-extension-runtime.js";
 
 function formatStartupError(prefix: string, error: unknown): string {
@@ -19,11 +23,11 @@ export default function (pi: ExtensionAPI) {
 
   try {
     const config = loadRuntimeConfig();
-    createExtensionRuntime(pi, config);
+    createExtensionRuntime(pi, config, runtimeHealth);
     runtimeHealth.runtimeLoaded = true;
-    runtimeHealth.degradedReasons = [];
+    replaceCommandRuntimeDegradedReasons(runtimeHealth, []);
   } catch (error) {
     runtimeHealth.runtimeLoaded = false;
-    runtimeHealth.degradedReasons = [formatStartupError("Runtime startup failed", error)];
+    replaceCommandRuntimeDegradedReasons(runtimeHealth, [formatStartupError("Runtime startup failed", error)]);
   }
 }

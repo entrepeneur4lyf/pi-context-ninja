@@ -2,6 +2,8 @@ import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
 import type { AgentMessage } from "@mariozechner/pi-agent-core";
 import type { ToolResultMessage } from "@mariozechner/pi-ai";
 import path from "node:path";
+import type { CommandRuntimeHealth } from "../control/commands.js";
+import { setCommandRuntimeDegradedReason } from "../control/commands.js";
 import { createSessionState, getOrCreateToolRecord, hydrateSessionState } from "../state.js";
 import { loadSessionState, resolveSessionId, saveSessionState } from "../persistence/state-store.js";
 import type { PCNConfig } from "../config.js";
@@ -39,6 +41,8 @@ const dashboardRuntime: DashboardRuntime = {
   failed: false,
   activeSessions: new Set(),
 };
+
+const DASHBOARD_RUNTIME_DEGRADED_REASON_KEY = "dashboard-bind";
 
 function getState(sessionId: string, projectPath?: string): SessionState {
   let state = sessionMap.get(sessionId);
@@ -95,6 +99,23 @@ function resolveContextTokens(state: SessionState, ctx: { getContextUsage(): { t
     return usage.tokens;
   }
   return state.lastContextTokens;
+}
+
+function formatRuntimeError(prefix: string, error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  return `${prefix}: ${message}`;
+}
+
+function setDashboardRuntimeDegradedReason(runtimeHealth: CommandRuntimeHealth | undefined, error: unknown | null): void {
+  if (!runtimeHealth) {
+    return;
+  }
+
+  setCommandRuntimeDegradedReason(
+    runtimeHealth,
+    DASHBOARD_RUNTIME_DEGRADED_REASON_KEY,
+    error === null ? null : formatRuntimeError("Dashboard server failed to start", error),
+  );
 }
 
 type ToolResultLike = Pick<ToolResultMessage, "toolCallId" | "toolName" | "content" | "isError">;
@@ -271,6 +292,7 @@ async function recordTurnAnalyticsSafely(
   sessionId: string,
   state: SessionState,
   config: PCNConfig,
+  runtimeHealth: CommandRuntimeHealth | undefined,
   turn: {
     turnIndex: number;
     toolCount: number;
@@ -305,11 +327,11 @@ async function recordTurnAnalyticsSafely(
     }
 
     if (!isProjectDashboardEnabled(state.projectPath)) {
-      await revokeDashboardSession(sessionId);
+      await revokeDashboardSession(sessionId, runtimeHealth);
       return;
     }
 
-    const dashboardServer = await ensureDashboardServer(sessionId, config);
+    const dashboardServer = await ensureDashboardServer(sessionId, config, runtimeHealth);
     if (dashboardServer) {
       dashboardServer.publish(sessionId, snapshot);
     }
@@ -318,7 +340,11 @@ async function recordTurnAnalyticsSafely(
   }
 }
 
-async function ensureDashboardServer(sessionId: string, config: PCNConfig): Promise<DashboardServerHandle | null> {
+async function ensureDashboardServer(
+  sessionId: string,
+  config: PCNConfig,
+  runtimeHealth?: CommandRuntimeHealth,
+): Promise<DashboardServerHandle | null> {
   if (!config.dashboard.enabled) {
     return null;
   }
@@ -326,6 +352,7 @@ async function ensureDashboardServer(sessionId: string, config: PCNConfig): Prom
   dashboardRuntime.activeSessions.add(sessionId);
 
   if (dashboardRuntime.handle) {
+    setDashboardRuntimeDegradedReason(runtimeHealth, null);
     return dashboardRuntime.handle;
   }
 
@@ -343,9 +370,11 @@ async function ensureDashboardServer(sessionId: string, config: PCNConfig): Prom
       try {
         await handle.ready;
         dashboardRuntime.handle = handle;
+        setDashboardRuntimeDegradedReason(runtimeHealth, null);
         return handle;
-      } catch {
+      } catch (error) {
         dashboardRuntime.failed = true;
+        setDashboardRuntimeDegradedReason(runtimeHealth, error);
         await handle.close().catch(() => {});
         return null;
       } finally {
@@ -357,7 +386,7 @@ async function ensureDashboardServer(sessionId: string, config: PCNConfig): Prom
   return dashboardRuntime.startPromise;
 }
 
-async function revokeDashboardSession(sessionId: string): Promise<void> {
+async function revokeDashboardSession(sessionId: string, runtimeHealth?: CommandRuntimeHealth): Promise<void> {
   if (dashboardRuntime.handle) {
     dashboardRuntime.handle.clearSession(sessionId);
   }
@@ -367,22 +396,24 @@ async function revokeDashboardSession(sessionId: string): Promise<void> {
     const handle = dashboardRuntime.handle;
     dashboardRuntime.handle = null;
     dashboardRuntime.failed = false;
+    setDashboardRuntimeDegradedReason(runtimeHealth, null);
     await handle.close().catch(() => {});
   } else if (dashboardRuntime.activeSessions.size === 0) {
     dashboardRuntime.failed = false;
+    setDashboardRuntimeDegradedReason(runtimeHealth, null);
   }
 }
 
-async function releaseSessionResources(sessionId: string): Promise<void> {
+async function releaseSessionResources(sessionId: string, runtimeHealth?: CommandRuntimeHealth): Promise<void> {
   evictAnalyticsStore(sessionId);
-  await revokeDashboardSession(sessionId);
+  await revokeDashboardSession(sessionId, runtimeHealth);
 }
 
 function isDataPlaneEnabled(projectPath?: string): boolean {
   return isProjectEnabled(projectPath);
 }
 
-export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): void {
+export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig, runtimeHealth?: CommandRuntimeHealth): void {
   pi.on("tool_call", (event, ctx) => {
     if (!isDataPlaneEnabled(ctx.cwd)) {
       return;
@@ -441,7 +472,7 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
   pi.on("turn_end", async (event, ctx) => {
     if (!isDataPlaneEnabled(ctx.cwd)) {
       const sessionId = resolveSessionId(ctx);
-      await revokeDashboardSession(sessionId);
+      await revokeDashboardSession(sessionId, runtimeHealth);
       return;
     }
 
@@ -489,7 +520,7 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
     const latestTurn = state.turnHistory.at(-1);
     try {
       if (latestTurn) {
-        await recordTurnAnalyticsSafely(sessionId, state, config, {
+        await recordTurnAnalyticsSafely(sessionId, state, config, runtimeHealth, {
           turnIndex: latestTurn.turnIndex,
           toolCount: latestTurn.toolCount,
           messageCountAfterTurn: latestTurn.messageCountAfterTurn,
@@ -574,6 +605,6 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
       saveSessionState(sessionId, state);
       sessionMap.delete(sessionId);
     }
-    await releaseSessionResources(sessionId);
+    await releaseSessionResources(sessionId, runtimeHealth);
   });
 }

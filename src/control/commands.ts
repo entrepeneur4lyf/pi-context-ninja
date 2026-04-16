@@ -7,15 +7,20 @@ import {
   disableProjectDashboard,
   enableProject,
   enableProjectDashboard,
+  readProjectControlState,
 } from "./project-state.js";
 import { buildProjectStatus } from "./status.js";
 
 const USAGE_MESSAGE = "Usage: /pcn status|doctor|export|enable|disable|enable dashboard|disable dashboard";
 
-export interface CommandRuntimeHealth {
+export interface CommandRuntimeHealthSnapshot {
   configPath: string;
   runtimeLoaded: boolean;
   degradedReasons: string[];
+}
+
+export interface CommandRuntimeHealth extends CommandRuntimeHealthSnapshot {
+  degradedReasonEntries: Map<string, string>;
 }
 
 export function createCommandRuntimeHealth(): CommandRuntimeHealth {
@@ -23,7 +28,36 @@ export function createCommandRuntimeHealth(): CommandRuntimeHealth {
     configPath: resolveRuntimeConfigPath(),
     runtimeLoaded: false,
     degradedReasons: [],
+    degradedReasonEntries: new Map(),
   };
+}
+
+function syncCommandRuntimeHealthDegradedReasons(runtimeHealth: CommandRuntimeHealth): void {
+  runtimeHealth.degradedReasons = [...runtimeHealth.degradedReasonEntries.values()];
+}
+
+export function replaceCommandRuntimeDegradedReasons(
+  runtimeHealth: CommandRuntimeHealth,
+  degradedReasons: string[],
+): void {
+  runtimeHealth.degradedReasonEntries.clear();
+  for (const [index, degradedReason] of degradedReasons.entries()) {
+    runtimeHealth.degradedReasonEntries.set(`startup:${index}`, degradedReason);
+  }
+  syncCommandRuntimeHealthDegradedReasons(runtimeHealth);
+}
+
+export function setCommandRuntimeDegradedReason(
+  runtimeHealth: CommandRuntimeHealth,
+  key: string,
+  degradedReason: string | null,
+): void {
+  if (degradedReason === null) {
+    runtimeHealth.degradedReasonEntries.delete(key);
+  } else {
+    runtimeHealth.degradedReasonEntries.set(key, degradedReason);
+  }
+  syncCommandRuntimeHealthDegradedReasons(runtimeHealth);
 }
 
 function parsePcnArgs(args: string): string[] {
@@ -39,7 +73,7 @@ function requireProjectPath(ctx: ExtensionCommandContext): string | null {
   return ctx.cwd;
 }
 
-function buildStatusMessage(projectPath: string, runtimeHealth: CommandRuntimeHealth): string {
+function buildStatusMessage(projectPath: string, runtimeHealth: CommandRuntimeHealthSnapshot): string {
   const status = buildProjectStatus({
     projectPath,
     configPath: runtimeHealth.configPath,
@@ -60,7 +94,7 @@ function buildStatusMessage(projectPath: string, runtimeHealth: CommandRuntimeHe
   return lines.join("\n");
 }
 
-function buildDoctorMessage(projectPath: string, runtimeHealth: CommandRuntimeHealth): string {
+function buildDoctorMessage(projectPath: string, runtimeHealth: CommandRuntimeHealthSnapshot): string {
   const report = buildProjectDoctorReport({
     projectPath,
     configPath: runtimeHealth.configPath,
@@ -73,7 +107,7 @@ function buildDoctorMessage(projectPath: string, runtimeHealth: CommandRuntimeHe
   );
 }
 
-function exportDoctorReport(projectPath: string, runtimeHealth: CommandRuntimeHealth): string {
+function exportDoctorReport(projectPath: string, runtimeHealth: CommandRuntimeHealthSnapshot): string {
   const report = buildProjectDoctorReport({
     projectPath,
     configPath: runtimeHealth.configPath,
@@ -86,7 +120,7 @@ function exportDoctorReport(projectPath: string, runtimeHealth: CommandRuntimeHe
 
 export function registerProjectControlCommands(
   pi: ExtensionAPI,
-  getRuntimeHealth: () => CommandRuntimeHealth,
+  getRuntimeHealth: () => CommandRuntimeHealthSnapshot,
 ): void {
   pi.registerCommand("pcn", {
     description: "Pi Context Ninja project controls",
@@ -116,7 +150,13 @@ export function registerProjectControlCommands(
 
       if (action === "enable" && target === "dashboard") {
         enableProjectDashboard(projectPath);
-        ctx.ui.notify("Pi Context Ninja dashboard enabled for this project.", "info");
+        const controlState = readProjectControlState(projectPath);
+        ctx.ui.notify(
+          controlState.enabled
+            ? "Pi Context Ninja dashboard enabled for this project."
+            : "Pi Context Ninja dashboard enabled for this project, but Pi Context Ninja remains disabled until /pcn enable.",
+          "info",
+        );
         return;
       }
 

@@ -714,4 +714,45 @@ describe("runtime integration", () => {
 
     await expect(fetch(`http://127.0.0.1:${port}/snapshot`)).rejects.toThrow();
   });
+
+  it("reports dashboard preference enabled but deferred when the project is globally disabled", async () => {
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-dashboard-enable-deferred-"));
+    const notify = vi.fn();
+    const commands = new Map<string, { handler: (...args: unknown[]) => unknown }>();
+    const pi = {
+      on: vi.fn(),
+      registerCommand: vi.fn((name: string, options: { handler: (...args: unknown[]) => unknown }) => {
+        commands.set(name, options);
+      }),
+    } as unknown as ExtensionAPI;
+    const ctx = {
+      cwd: projectDir,
+      sessionManager: {
+        getSessionId: () => "session-dashboard-enable-deferred",
+        getEntries: () => [{ id: "m1" }, { id: "m2" }],
+      },
+      getContextUsage: () => ({ tokens: 300, percent: 0.3, contextWindow: 1000 }),
+      ui: { notify },
+    } as any;
+
+    try {
+      const { default: registerExtension } = await import("../src/index.js");
+      registerExtension(pi);
+
+      await commands.get("pcn")?.handler("disable", ctx);
+      await commands.get("pcn")?.handler("disable dashboard", ctx);
+
+      notify.mockClear();
+      await commands.get("pcn")?.handler("enable dashboard", ctx);
+
+      expect(fs.existsSync(path.join(projectDir, ".pi", ".pi-ninja", ".pcn_disabled"))).toBe(true);
+      expect(fs.existsSync(path.join(projectDir, ".pi", ".pi-ninja", ".pcn_dashboard_disabled"))).toBe(false);
+      expect(notify).toHaveBeenCalledWith(
+        "Pi Context Ninja dashboard enabled for this project, but Pi Context Ninja remains disabled until /pcn enable.",
+        "info",
+      );
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
 });
