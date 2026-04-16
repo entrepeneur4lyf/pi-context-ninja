@@ -395,6 +395,33 @@ describe("runtime hook registration", () => {
     }
   });
 
+  it("reports dashboard preference separately from effective availability in /pcn status", async () => {
+    const { commands, pi } = createPiMock();
+    const notify = vi.fn();
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-status-dashboard-state-"));
+    const ctx = {
+      ...createContext("session-status-dashboard-state", projectDir),
+      ui: { notify },
+    } as any;
+
+    try {
+      registerExtension(pi);
+
+      await commands.get("pcn")?.handler("disable", ctx);
+      notify.mockClear();
+
+      await commands.get("pcn")?.handler("status", ctx);
+
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining("Dashboard preference: enabled"), "info");
+      expect(notify).toHaveBeenCalledWith(
+        expect.stringContaining("Dashboard active: no (PCN disabled for project)"),
+        "info",
+      );
+    } finally {
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it("reports live dashboard runtime degradation through /pcn status after startup", async () => {
     const dashboardStartError = new Error("bind EADDRINUSE 127.0.0.1:48900");
     const dashboardHandle = {
@@ -447,6 +474,105 @@ describe("runtime hook registration", () => {
       expect(startDashboardServerMock).toHaveBeenCalledTimes(1);
       expect(dashboardHandle.close).toHaveBeenCalledTimes(1);
     } finally {
+      vi.doUnmock("../src/dashboard/server.js");
+      vi.resetModules();
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("retries dashboard startup after the cooldown and clears degraded status once recovery succeeds", async () => {
+    let now = 1_000;
+    const dateNowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    const dashboardStartError = new Error("bind EADDRINUSE 127.0.0.1:48900");
+    const failingHandle = {
+      ready: {
+        then(_resolve: (value: never) => void, reject: (reason: unknown) => void) {
+          reject(dashboardStartError);
+        },
+      } as Promise<never>,
+      close: vi.fn(async () => {}),
+      clearSession: vi.fn(),
+      publish: vi.fn(),
+    };
+    const successHandle = {
+      ready: Promise.resolve(),
+      close: vi.fn(async () => {}),
+      clearSession: vi.fn(),
+      publish: vi.fn(),
+    };
+    const startDashboardServerMock = vi.fn()
+      .mockImplementationOnce(() => failingHandle)
+      .mockImplementationOnce(() => successHandle);
+
+    vi.resetModules();
+    vi.doMock("../src/dashboard/server.js", () => ({
+      startDashboardServer: startDashboardServerMock,
+    }));
+
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-project-dashboard-retry-"));
+    const notify = vi.fn();
+    const ctx = {
+      ...createContext("session-dashboard-retry", projectDir),
+      ui: { notify },
+    } as any;
+
+    try {
+      const { default: registerExtensionWithMockedDashboard } = await import("../src/index.js");
+      const { commands, calls, pi } = createPiMock();
+      registerExtensionWithMockedDashboard(pi);
+
+      await expect(
+        calls.get("turn_end")?.(
+          {
+            turnIndex: 0,
+            message: { role: "assistant", content: "first turn" },
+            toolResults: [],
+          },
+          ctx,
+        ),
+      ).resolves.toBeUndefined();
+      expect(startDashboardServerMock).toHaveBeenCalledTimes(1);
+
+      notify.mockClear();
+      await commands.get("pcn")?.handler("status", ctx);
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining("PCN degraded"), "info");
+      expect(notify).toHaveBeenCalledWith(expect.stringContaining("Dashboard server failed to start"), "info");
+
+      await expect(
+        calls.get("turn_end")?.(
+          {
+            turnIndex: 1,
+            message: { role: "assistant", content: "second turn" },
+            toolResults: [],
+          },
+          ctx,
+        ),
+      ).resolves.toBeUndefined();
+      expect(startDashboardServerMock).toHaveBeenCalledTimes(1);
+
+      now += 5_001;
+      await expect(
+        calls.get("turn_end")?.(
+          {
+            turnIndex: 2,
+            message: { role: "assistant", content: "third turn" },
+            toolResults: [],
+          },
+          ctx,
+        ),
+      ).resolves.toBeUndefined();
+      expect(startDashboardServerMock).toHaveBeenCalledTimes(2);
+      expect(successHandle.publish).toHaveBeenCalledTimes(1);
+
+      notify.mockClear();
+      await commands.get("pcn")?.handler("status", ctx);
+      const message = String(notify.mock.calls.at(-1)?.[0]);
+      expect(message).toContain("PCN full");
+      expect(message).toContain("Dashboard preference: enabled");
+      expect(message).toContain("Dashboard active: yes");
+      expect(message).not.toContain("Dashboard server failed to start");
+    } finally {
+      dateNowSpy.mockRestore();
       vi.doUnmock("../src/dashboard/server.js");
       vi.resetModules();
       fs.rmSync(projectDir, { recursive: true, force: true });

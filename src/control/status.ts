@@ -7,6 +7,7 @@ export interface ProjectStatus {
   runtimeLoaded: boolean;
   enabled: boolean;
   dashboardEnabled: boolean;
+  dashboardActive: boolean;
   mode: "full" | "degraded" | "disabled";
   degradedReasons: string[];
 }
@@ -18,6 +19,7 @@ export function buildProjectStatus(input: {
   degradedReasons: string[];
 }): ProjectStatus {
   const control = readProjectControlState(input.projectPath);
+  const dashboardActive = control.enabled && control.dashboardEnabled;
   const mode = !control.enabled
     ? "disabled"
     : !input.runtimeLoaded || input.degradedReasons.length > 0
@@ -31,6 +33,7 @@ export function buildProjectStatus(input: {
     runtimeLoaded: input.runtimeLoaded,
     enabled: control.enabled,
     dashboardEnabled: control.dashboardEnabled,
+    dashboardActive,
     mode,
     degradedReasons: [...input.degradedReasons],
   };

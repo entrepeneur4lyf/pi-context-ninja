@@ -33,6 +33,7 @@ type DashboardRuntime = {
   handle: DashboardServerHandle | null;
   startPromise: Promise<DashboardServerHandle | null> | null;
   failed: boolean;
+  lastFailureAt: number | null;
   activeSessions: Set<string>;
 };
 
@@ -40,10 +41,12 @@ const dashboardRuntime: DashboardRuntime = {
   handle: null,
   startPromise: null,
   failed: false,
+  lastFailureAt: null,
   activeSessions: new Set(),
 };
 
 const DASHBOARD_RUNTIME_DEGRADED_REASON_KEY = "dashboard-bind";
+const DASHBOARD_RETRY_COOLDOWN_MS = 5_000;
 
 export interface ExtensionRuntimeControls {
   revokeDashboardSession: (sessionId: string) => Promise<void>;
@@ -369,7 +372,11 @@ async function ensureDashboardServer(
   }
 
   if (dashboardRuntime.failed) {
-    return null;
+    const lastFailureAt = dashboardRuntime.lastFailureAt ?? 0;
+    if (Date.now() - lastFailureAt < DASHBOARD_RETRY_COOLDOWN_MS) {
+      return null;
+    }
+    dashboardRuntime.failed = false;
   }
 
   if (!dashboardRuntime.startPromise) {
@@ -382,10 +389,13 @@ async function ensureDashboardServer(
       try {
         await handle.ready;
         dashboardRuntime.handle = handle;
+        dashboardRuntime.failed = false;
+        dashboardRuntime.lastFailureAt = null;
         setDashboardRuntimeDegradedReason(runtimeHealth, null);
         return handle;
       } catch (error) {
         dashboardRuntime.failed = true;
+        dashboardRuntime.lastFailureAt = Date.now();
         setDashboardRuntimeDegradedReason(runtimeHealth, error);
         await handle.close().catch(() => {});
         return null;
@@ -408,10 +418,12 @@ async function revokeDashboardSession(sessionId: string, runtimeHealth?: Command
     const handle = dashboardRuntime.handle;
     dashboardRuntime.handle = null;
     dashboardRuntime.failed = false;
+    dashboardRuntime.lastFailureAt = null;
     setDashboardRuntimeDegradedReason(runtimeHealth, null);
     await handle.close().catch(() => {});
   } else if (dashboardRuntime.activeSessions.size === 0) {
     dashboardRuntime.failed = false;
+    dashboardRuntime.lastFailureAt = null;
     setDashboardRuntimeDegradedReason(runtimeHealth, null);
   }
 }

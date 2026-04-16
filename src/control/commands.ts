@@ -97,8 +97,16 @@ function buildStatusMessage(projectPath: string, runtimeHealth: CommandRuntimeHe
   const lines = [
     `PCN ${status.mode} for ${status.projectPath}`,
     `Config: ${status.configPath}`,
-    `Dashboard: ${status.dashboardEnabled ? "enabled" : "disabled"}`,
+    `Dashboard preference: ${status.dashboardEnabled ? "enabled" : "disabled"}`,
   ];
+
+  if (!status.enabled) {
+    lines.push("Dashboard active: no (PCN disabled for project)");
+  } else if (!status.dashboardEnabled) {
+    lines.push("Dashboard active: no (dashboard disabled for project)");
+  } else {
+    lines.push(`Dashboard active: ${status.dashboardActive ? "yes" : "no"}`);
+  }
 
   if (status.degradedReasons.length > 0) {
     lines.push(`Degraded: ${status.degradedReasons.join(" | ")}`);
