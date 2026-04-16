@@ -432,6 +432,164 @@ describe("dashboard server", () => {
 });
 
 describe("runtime integration", () => {
+  it("clears a previously published dashboard snapshot after the project is disabled on a later turn", async () => {
+    const probe = http.createServer();
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+    const address = probe.address();
+    if (!address || typeof address === "string") {
+      throw new Error("expected a bound probe port");
+    }
+    const port = address.port;
+    await new Promise<void>((resolve, reject) => probe.close((error) => (error ? reject(error) : resolve())));
+
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-project-disable-transition-"));
+    const controlDir = path.join(projectDir, ".pi", ".pi-ninja");
+    fs.mkdirSync(controlDir, { recursive: true });
+
+    const piCalls = new Map<string, (...args: any[]) => unknown>();
+    const pi = {
+      on: vi.fn((name: string, handler: (...args: any[]) => unknown) => {
+        piCalls.set(name, handler);
+      }),
+    } as unknown as ExtensionAPI;
+
+    const config = defaultConfig();
+    config.analytics.enabled = true;
+    config.analytics.dbPath = path.join(tmpDir, "analytics-project-disable-transition.sqlite");
+    config.dashboard.enabled = true;
+    config.dashboard.port = port;
+    config.dashboard.bindHost = "127.0.0.1";
+
+    const ctx = {
+      cwd: projectDir,
+      sessionManager: {
+        getSessionId: () => "session-project-disable-transition",
+        getEntries: () => [{ id: "m1" }, { id: "m2" }, { id: "m3" }],
+      },
+      getContextUsage: () => ({ tokens: 420, percent: 0.42, contextWindow: 1000 }),
+    } as any;
+
+    let runtimeStarted = false;
+
+    try {
+      createExtensionRuntime(pi, config);
+      runtimeStarted = true;
+
+      await piCalls.get("turn_end")?.(
+        {
+          turnIndex: 0,
+          message: { role: "assistant", content: "first turn" },
+          toolResults: [],
+        },
+        ctx,
+      );
+
+      const firstSnapshot = await fetch(`http://127.0.0.1:${port}/snapshot?sessionId=session-project-disable-transition`).then(
+        (res) => res.json(),
+      );
+      expect(firstSnapshot.totalTurns).toBe(1);
+
+      fs.writeFileSync(path.join(controlDir, ".pcn_disabled"), "", "utf8");
+
+      await piCalls.get("turn_end")?.(
+        {
+          turnIndex: 1,
+          message: { role: "assistant", content: "second turn" },
+          toolResults: [],
+        },
+        ctx,
+      );
+
+      await expect(
+        fetch(`http://127.0.0.1:${port}/snapshot?sessionId=session-project-disable-transition`),
+      ).rejects.toThrow();
+    } finally {
+      if (runtimeStarted) {
+        await piCalls.get("session_shutdown")?.({}, ctx);
+      }
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  it("clears a previously published dashboard snapshot after dashboard is disabled on a later turn", async () => {
+    const probe = http.createServer();
+    await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
+    const address = probe.address();
+    if (!address || typeof address === "string") {
+      throw new Error("expected a bound probe port");
+    }
+    const port = address.port;
+    await new Promise<void>((resolve, reject) => probe.close((error) => (error ? reject(error) : resolve())));
+
+    const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-dashboard-disable-transition-"));
+    const controlDir = path.join(projectDir, ".pi", ".pi-ninja");
+    fs.mkdirSync(controlDir, { recursive: true });
+
+    const piCalls = new Map<string, (...args: any[]) => unknown>();
+    const pi = {
+      on: vi.fn((name: string, handler: (...args: any[]) => unknown) => {
+        piCalls.set(name, handler);
+      }),
+    } as unknown as ExtensionAPI;
+
+    const config = defaultConfig();
+    config.analytics.enabled = true;
+    config.analytics.dbPath = path.join(tmpDir, "analytics-dashboard-disable-transition.sqlite");
+    config.dashboard.enabled = true;
+    config.dashboard.port = port;
+    config.dashboard.bindHost = "127.0.0.1";
+
+    const ctx = {
+      cwd: projectDir,
+      sessionManager: {
+        getSessionId: () => "session-dashboard-disable-transition",
+        getEntries: () => [{ id: "m1" }, { id: "m2" }, { id: "m3" }],
+      },
+      getContextUsage: () => ({ tokens: 420, percent: 0.42, contextWindow: 1000 }),
+    } as any;
+
+    let runtimeStarted = false;
+
+    try {
+      createExtensionRuntime(pi, config);
+      runtimeStarted = true;
+
+      await piCalls.get("turn_end")?.(
+        {
+          turnIndex: 0,
+          message: { role: "assistant", content: "first turn" },
+          toolResults: [],
+        },
+        ctx,
+      );
+
+      const firstSnapshot = await fetch(
+        `http://127.0.0.1:${port}/snapshot?sessionId=session-dashboard-disable-transition`,
+      ).then((res) => res.json());
+      expect(firstSnapshot.totalTurns).toBe(1);
+
+      fs.writeFileSync(path.join(controlDir, ".pcn_dashboard_disabled"), "", "utf8");
+
+      await piCalls.get("turn_end")?.(
+        {
+          turnIndex: 1,
+          message: { role: "assistant", content: "second turn" },
+          toolResults: [],
+        },
+        ctx,
+      );
+
+      await expect(
+        fetch(`http://127.0.0.1:${port}/snapshot?sessionId=session-dashboard-disable-transition`),
+      ).rejects.toThrow();
+    } finally {
+      if (runtimeStarted) {
+        await piCalls.get("session_shutdown")?.({}, ctx);
+      }
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
   it("records analytics but does not publish when only dashboard is disabled for the project", async () => {
     const probe = http.createServer();
     await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));

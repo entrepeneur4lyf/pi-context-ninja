@@ -305,6 +305,7 @@ async function recordTurnAnalyticsSafely(
     }
 
     if (!isProjectDashboardEnabled(state.projectPath)) {
+      await revokeDashboardSession(sessionId);
       return;
     }
 
@@ -356,9 +357,7 @@ async function ensureDashboardServer(sessionId: string, config: PCNConfig): Prom
   return dashboardRuntime.startPromise;
 }
 
-async function releaseSessionResources(sessionId: string): Promise<void> {
-  evictAnalyticsStore(sessionId);
-
+async function revokeDashboardSession(sessionId: string): Promise<void> {
   if (dashboardRuntime.handle) {
     dashboardRuntime.handle.clearSession(sessionId);
   }
@@ -372,6 +371,11 @@ async function releaseSessionResources(sessionId: string): Promise<void> {
   } else if (dashboardRuntime.activeSessions.size === 0) {
     dashboardRuntime.failed = false;
   }
+}
+
+async function releaseSessionResources(sessionId: string): Promise<void> {
+  evictAnalyticsStore(sessionId);
+  await revokeDashboardSession(sessionId);
 }
 
 function isDataPlaneEnabled(projectPath?: string): boolean {
@@ -436,6 +440,8 @@ export function createExtensionRuntime(pi: ExtensionAPI, config: PCNConfig): voi
 
   pi.on("turn_end", async (event, ctx) => {
     if (!isDataPlaneEnabled(ctx.cwd)) {
+      const sessionId = resolveSessionId(ctx);
+      await revokeDashboardSession(sessionId);
       return;
     }
 
