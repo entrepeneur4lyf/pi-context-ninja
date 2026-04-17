@@ -1,6 +1,6 @@
 .worktrees/
 node_modules/
 dist/
-docs/superpowers/
+docs/
 .gitnexus
 .pi/.pi-ninja/

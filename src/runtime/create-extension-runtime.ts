@@ -334,6 +334,14 @@ function resolveImpactToolName(toolResults: ToolResultLike[]): string | null {
   return toolNames.length === 1 ? toolNames[0] : null;
 }
 
+function normalizeContextPercent(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return value > 1 ? value / 100 : value;
+}
+
 function buildDashboardImpactEvents(
   sessionId: string,
   state: SessionState,
@@ -620,7 +628,7 @@ export function createExtensionRuntime(
     const usage = ctx.getContextUsage();
     if (usage) {
       state.lastContextTokens = usage.tokens;
-      state.lastContextPercent = usage.percent;
+      state.lastContextPercent = normalizeContextPercent(usage.percent);
       state.lastContextWindow = usage.contextWindow;
     }
 

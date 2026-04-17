@@ -66,6 +66,51 @@ describe("analytics store", () => {
     }
   });
 
+  it("normalizes context percent values from Pi's 0-100 contract", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-analytics-"));
+    const dbPath = path.join(tmpDir, "analytics.sqlite");
+    const timestamp = Date.now();
+
+    try {
+      const store = createAnalyticsStore({ dbPath, retentionDays: 30 });
+
+      const snapshot = store.recordTurn({
+        sessionId: "session-percent",
+        projectPath: "/tmp/project-percent",
+        turnIndex: 1,
+        toolCount: 1,
+        messageCountAfterTurn: 2,
+        timestamp,
+        contextTokens: 23_554,
+        contextPercent: 11.617,
+        contextWindow: 202_752,
+        tokensSavedApprox: 7,
+        tokensKeptOutApprox: 12,
+        impactEvents: [
+          {
+            timestamp,
+            sessionId: "session-percent",
+            projectPath: "/tmp/project-percent",
+            source: "runtime.materialize",
+            toolName: "read",
+            strategy: "short_circuit",
+            tokensSavedApprox: 7,
+            tokensKeptOutApprox: 12,
+            contextPercent: 11.617,
+            summary: "short_circuit on read kept a known-success payload out of context",
+          },
+        ],
+      });
+
+      expect(snapshot.context.percent).toBeCloseTo(0.11617);
+      expect(snapshot.recentImpactEvents[0]?.contextPercent).toBeCloseTo(0.11617);
+
+      store.close();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
   it("persists only nonzero impact events and exposes session-scoped strategy totals", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-analytics-"));
     const dbPath = path.join(tmpDir, "analytics.sqlite");

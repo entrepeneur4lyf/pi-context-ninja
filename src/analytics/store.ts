@@ -47,6 +47,18 @@ interface StrategyImpactTotalsRow {
   tokensKeptOutApprox: number;
 }
 
+function normalizeContextPercent(value: number | null | undefined): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  if (value > 1) {
+    return value / 100;
+  }
+
+  return value;
+}
+
 const CREATE_TABLE_SQL = `
   CREATE TABLE IF NOT EXISTS turn_metrics (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -109,7 +121,7 @@ function toTurnRecord(row: AnalyticsRow): AnalyticsTurnRecord {
     messageCountAfterTurn: row.message_count_after_turn,
     timestamp: row.timestamp,
     contextTokens: row.context_tokens,
-    contextPercent: row.context_percent,
+    contextPercent: normalizeContextPercent(row.context_percent),
     contextWindow: row.context_window,
     tokensSavedApprox: row.tokens_saved_approx,
     tokensKeptOutApprox: row.tokens_kept_out_approx,
@@ -166,7 +178,7 @@ function toImpactEvent(row: ImpactEventRow): DashboardImpactEvent {
     strategy: row.strategy,
     tokensSavedApprox: row.tokens_saved_approx,
     tokensKeptOutApprox: row.tokens_kept_out_approx,
-    contextPercent: row.context_percent,
+    contextPercent: normalizeContextPercent(row.context_percent),
     summary: row.summary,
   };
 }
@@ -395,10 +407,17 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
   `);
 
   const writeTurn = db.transaction((turn: AnalyticsTurnWrite) => {
-    insertTurn.run(turn);
+    insertTurn.run({
+      ...turn,
+      contextPercent: normalizeContextPercent(turn.contextPercent),
+    });
     for (const event of sanitizeImpactEvents(turn.impactEvents)) {
-      insertImpactEvent.run(event);
-      upsertStrategyTotals.run(event);
+      const normalizedEvent = {
+        ...event,
+        contextPercent: normalizeContextPercent(event.contextPercent),
+      };
+      insertImpactEvent.run(normalizedEvent);
+      upsertStrategyTotals.run(normalizedEvent);
     }
   });
 
