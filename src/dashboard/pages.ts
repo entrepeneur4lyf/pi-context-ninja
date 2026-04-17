@@ -16,6 +16,16 @@ export function renderDashboardPage(): string {
       --accent: #7dd3fc;
       --accent-strong: #22d3ee;
       --good: #86efac;
+      --scope-session: linear-gradient(90deg, #22d3ee 0%, #38bdf8 100%);
+      --scope-project: linear-gradient(90deg, #818cf8 0%, #38bdf8 100%);
+      --scope-lifetime: linear-gradient(90deg, #34d399 0%, #86efac 100%);
+      --track: rgba(122, 162, 203, 0.14);
+      --strategy-1: linear-gradient(90deg, #fb7185 0%, #f97316 100%);
+      --strategy-2: linear-gradient(90deg, #f59e0b 0%, #facc15 100%);
+      --strategy-3: linear-gradient(90deg, #22d3ee 0%, #38bdf8 100%);
+      --strategy-4: linear-gradient(90deg, #a78bfa 0%, #818cf8 100%);
+      --strategy-5: linear-gradient(90deg, #34d399 0%, #2dd4bf 100%);
+      --strategy-6: linear-gradient(90deg, #c084fc 0%, #e879f9 100%);
     }
 
     * { box-sizing: border-box; }
@@ -111,6 +121,13 @@ export function renderDashboardPage(): string {
       grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.95fr);
     }
 
+    .chart-grid {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+      margin-bottom: 1rem;
+    }
+
     .panel {
       padding: 1.1rem;
     }
@@ -148,6 +165,95 @@ export function renderDashboardPage(): string {
     .metric {
       color: var(--good);
       font-weight: 600;
+    }
+
+    .chart-shell {
+      display: grid;
+      gap: 0.9rem;
+    }
+
+    .chart-shell.empty {
+      color: var(--muted);
+    }
+
+    .chart-row {
+      display: grid;
+      gap: 0.5rem;
+    }
+
+    .chart-topline {
+      display: flex;
+      justify-content: space-between;
+      gap: 1rem;
+      align-items: baseline;
+      font-size: 0.95rem;
+    }
+
+    .chart-label {
+      font-weight: 700;
+      color: var(--text);
+    }
+
+    .chart-value {
+      color: var(--accent-strong);
+      font-weight: 700;
+    }
+
+    .chart-detail {
+      color: var(--muted);
+      font-size: 0.82rem;
+      line-height: 1.4;
+    }
+
+    .chart-track {
+      position: relative;
+      overflow: hidden;
+      height: 0.7rem;
+      border-radius: 999px;
+      background: var(--track);
+      border: 1px solid rgba(122, 162, 203, 0.08);
+    }
+
+    .chart-fill {
+      height: 100%;
+      border-radius: inherit;
+      min-width: 0;
+    }
+
+    .scope-session {
+      background: var(--scope-session);
+    }
+
+    .scope-project {
+      background: var(--scope-project);
+    }
+
+    .scope-lifetime {
+      background: var(--scope-lifetime);
+    }
+
+    .strategy-1 {
+      background: var(--strategy-1);
+    }
+
+    .strategy-2 {
+      background: var(--strategy-2);
+    }
+
+    .strategy-3 {
+      background: var(--strategy-3);
+    }
+
+    .strategy-4 {
+      background: var(--strategy-4);
+    }
+
+    .strategy-5 {
+      background: var(--strategy-5);
+    }
+
+    .strategy-6 {
+      background: var(--strategy-6);
     }
 
     @media (max-width: 860px) {
@@ -188,6 +294,20 @@ export function renderDashboardPage(): string {
       </article>
     </section>
 
+    <section class="chart-grid" aria-label="Dashboard Charts">
+      <article class="panel">
+        <h2>Scope Comparison</h2>
+        <p class="panel-copy">Session, project, and lifetime savings stay side by side so the current run never gets mistaken for the whole campaign.</p>
+        <div id="scope-chart" class="chart-shell empty">No scope comparison yet.</div>
+      </article>
+
+      <article class="panel">
+        <h2>Strategy Payoff</h2>
+        <p class="panel-copy">Backend strategy totals rank which pruning moves are actually paying off, without dragging operator attention into transport detail.</p>
+        <div id="strategy-chart" class="chart-shell empty">No strategy payoff yet.</div>
+      </article>
+    </section>
+
     <section class="layout">
       <article class="panel">
         <h2>Impact Ledger</h2>
@@ -209,6 +329,8 @@ export function renderDashboardPage(): string {
     const contextPctEl = document.getElementById('ctx-pct');
     const keptOutEl = document.getElementById('kept-out');
     const turnsEl = document.getElementById('turns');
+    const scopeChartEl = document.getElementById('scope-chart');
+    const strategyChartEl = document.getElementById('strategy-chart');
     const impactLedgerEl = document.getElementById('impact-ledger');
     const liveFeedEl = document.getElementById('live-feed');
 
@@ -229,11 +351,36 @@ export function renderDashboardPage(): string {
       return normalized.toFixed(1) + '%';
     }
 
+    function escapeHtml(value) {
+      return String(value)
+        .replaceAll('&', '&amp;')
+        .replaceAll('<', '&lt;')
+        .replaceAll('>', '&gt;')
+        .replaceAll('"', '&quot;')
+        .replaceAll("'", '&#39;');
+    }
+
     function resolveSessionScope(snapshot) {
       return snapshot?.scopes?.session ?? {
         tokensKeptOutApprox: snapshot?.totals?.tokensKeptOutApprox ?? null,
         turnCount: snapshot?.totalTurns ?? null,
       };
+    }
+
+    function humanizeLabel(value) {
+      return String(value)
+        .split('_')
+        .filter(Boolean)
+        .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+        .join(' ');
+    }
+
+    function getChartWidth(value, maxValue) {
+      if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || maxValue <= 0) {
+        return '0%';
+      }
+
+      return Math.max(8, Math.round((value / maxValue) * 100)) + '%';
     }
 
     function buildSnapshotUrl() {
@@ -298,6 +445,102 @@ export function renderDashboardPage(): string {
       contextPctEl.textContent = formatPercent(snapshot.context?.percent);
       keptOutEl.textContent = formatNumber(sessionScope?.tokensKeptOutApprox);
       turnsEl.textContent = formatNumber(sessionScope?.turnCount);
+    }
+
+    function renderScopeChart(snapshot) {
+      const scopeEntries = snapshot?.scopes
+        ? [
+            { label: 'Session', className: 'scope-session', data: snapshot.scopes.session },
+            { label: 'Project', className: 'scope-project', data: snapshot.scopes.project },
+            { label: 'Lifetime', className: 'scope-lifetime', data: snapshot.scopes.lifetime },
+          ]
+        : [];
+
+      const maxSaved = Math.max(
+        0,
+        ...scopeEntries.map((entry) =>
+          typeof entry.data?.tokensSavedApprox === 'number' && Number.isFinite(entry.data.tokensSavedApprox)
+            ? entry.data.tokensSavedApprox
+            : 0,
+        ),
+      );
+
+      if (scopeEntries.length === 0 || maxSaved === 0) {
+        scopeChartEl.innerHTML = 'No scope comparison yet.';
+        scopeChartEl.className = 'chart-shell empty';
+        return;
+      }
+
+      scopeChartEl.className = 'chart-shell';
+      scopeChartEl.innerHTML = scopeEntries
+        .map(({ label, className, data }) => {
+          const saved = typeof data.tokensSavedApprox === 'number' ? data.tokensSavedApprox : 0;
+          const keptOut = typeof data.tokensKeptOutApprox === 'number' ? data.tokensKeptOutApprox : 0;
+          const turns = typeof data.turnCount === 'number' ? data.turnCount : 0;
+
+          return [
+            '<div class="chart-row">',
+            '  <div class="chart-topline">',
+            '    <span class="chart-label">' + label + '</span>',
+            '    <span class="chart-value">' + formatNumber(saved) + ' saved</span>',
+            '  </div>',
+            '  <div class="chart-track"><div class="chart-fill ' +
+              className +
+              '" style="width: ' +
+              getChartWidth(saved, maxSaved) +
+              ';"></div></div>',
+            '  <div class="chart-detail">kept out ' +
+              formatNumber(keptOut) +
+              ' · ' +
+              formatNumber(turns) +
+              ' turn' +
+              (turns === 1 ? '' : 's') +
+              '</div>',
+            '</div>',
+          ].join('');
+        })
+        .join('');
+    }
+
+    function renderStrategyChart(snapshot) {
+      const strategyEntries = Object.entries(snapshot?.strategyTotals ?? {})
+        .filter(([, value]) => typeof value === 'number' && Number.isFinite(value) && value > 0)
+        .sort((left, right) => right[1] - left[1])
+        .slice(0, 6);
+      const maxSaved = strategyEntries.length === 0 ? 0 : strategyEntries[0][1];
+
+      if (strategyEntries.length === 0 || maxSaved === 0) {
+        strategyChartEl.innerHTML = 'No strategy payoff yet.';
+        strategyChartEl.className = 'chart-shell empty';
+        return;
+      }
+
+      strategyChartEl.className = 'chart-shell';
+      strategyChartEl.innerHTML = strategyEntries
+        .map(([strategy, saved], index) => {
+          const colorClass = 'strategy-' + ((index % 6) + 1);
+
+          return [
+            '<div class="chart-row">',
+            '  <div class="chart-topline">',
+            '    <span class="chart-label">' + escapeHtml(humanizeLabel(strategy)) + '</span>',
+            '    <span class="chart-value">' + formatNumber(saved) + ' saved</span>',
+            '  </div>',
+            '  <div class="chart-track"><div class="chart-fill ' +
+              colorClass +
+              '" style="width: ' +
+              getChartWidth(saved, maxSaved) +
+              ';"></div></div>',
+            '  <div class="chart-detail">Backend strategyTotals signal</div>',
+            '</div>',
+          ].join('');
+        })
+        .join('');
+    }
+
+    function renderCharts(snapshot) {
+      renderScopeChart(snapshot);
+      renderStrategyChart(snapshot);
     }
 
     function formatImpactEntry(entry) {
@@ -379,6 +622,7 @@ export function renderDashboardPage(): string {
 
       if (payload.type === 'snapshot') {
         applySnapshotStats(payload.data);
+        renderCharts(payload.data);
         renderImpactLedger(Array.isArray(payload.data?.recentImpactEvents) ? payload.data.recentImpactEvents : []);
 
         if (!currentSessionId && typeof payload.data?.sessionId === 'string' && payload.data.sessionId.length > 0) {
@@ -400,8 +644,10 @@ export function renderDashboardPage(): string {
           bindToSession(snapshot.sessionId, false);
         }
         applySnapshotStats(snapshot);
+        renderCharts(snapshot);
       } catch {
         resetSnapshotStats();
+        renderCharts(null);
       }
 
       try {

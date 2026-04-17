@@ -109,6 +109,8 @@ function createDashboardScriptHarness({ search = "" }: { search?: string } = {})
       ["turns", { textContent: "--" }],
       ["project-path", { textContent: "--" }],
       ["impact-ledger", { textContent: "", innerHTML: "" }],
+      ["scope-chart", { textContent: "", innerHTML: "" }],
+      ["strategy-chart", { textContent: "", innerHTML: "" }],
       ["live-feed", { textContent: "", innerHTML: "", scrollTop: 0, scrollHeight: 0 }],
     ].map(([id, element]) => [id, element as { textContent: string; scrollTop?: number; scrollHeight?: number }]),
   );
@@ -154,9 +156,26 @@ function createDashboardScriptHarness({ search = "" }: { search?: string } = {})
             context: { percent: 0.375 },
             scopes: {
               session: {
+                tokensSavedApprox: 55,
                 tokensKeptOutApprox: 144,
                 turnCount: 3,
               },
+              project: {
+                tokensSavedApprox: 120,
+                tokensKeptOutApprox: 320,
+                turnCount: 8,
+              },
+              lifetime: {
+                tokensSavedApprox: 220,
+                tokensKeptOutApprox: 640,
+                turnCount: 14,
+              },
+            },
+            strategyTotals: {
+              short_circuit: 55,
+              deduplication: 34,
+              truncation: 18,
+              code_filter: 11,
             },
           }),
         });
@@ -239,6 +258,13 @@ function createDashboardScriptHarness({ search = "" }: { search?: string } = {})
         throw new Error(`missing test element: ${id}`);
       }
       return element.textContent;
+    },
+    getHtml(id: string) {
+      const element = elements.get(id) as { innerHTML?: string } | undefined;
+      if (!element) {
+        throw new Error(`missing test element: ${id}`);
+      }
+      return element.innerHTML ?? "";
     },
     getFetchUrls() {
       return fetchUrls;
@@ -683,6 +709,15 @@ describe("dashboard server", () => {
     }
   });
 
+  it("renders scope and strategy chart panels in the control-tower shell", () => {
+    const html = renderDashboardPage();
+
+    expect(html).toContain("Scope Comparison");
+    expect(html).toContain('id="scope-chart"');
+    expect(html).toContain("Strategy Payoff");
+    expect(html).toContain('id="strategy-chart"');
+  });
+
   it("bootstraps snapshot and history before subscribing to the scoped SSE stream", async () => {
     const page = createDashboardScriptHarness({ search: "?sessionId=session-a" });
 
@@ -695,6 +730,48 @@ describe("dashboard server", () => {
     expect(page.getText("ctx-pct")).toBe("37.5%");
     expect(page.getText("impact-ledger")).toContain("Short-circuited repeated read output.");
     expect(page.getText("impact-ledger")).toContain("ctx 37.5%");
+  });
+
+  it("renders scope and strategy charts from the dashboard snapshot", async () => {
+    const page = createDashboardScriptHarness({ search: "?sessionId=session-a" });
+
+    await page.flush();
+
+    expect(page.getHtml("scope-chart")).toContain("Session");
+    expect(page.getHtml("scope-chart")).toContain("Project");
+    expect(page.getHtml("scope-chart")).toContain("Lifetime");
+    expect(page.getHtml("scope-chart")).toContain("55");
+    expect(page.getHtml("scope-chart")).toContain("120");
+    expect(page.getHtml("scope-chart")).toContain("220");
+    expect(page.getHtml("scope-chart")).toContain("kept out 144");
+
+    expect(page.getHtml("strategy-chart")).toContain("Short Circuit");
+    expect(page.getHtml("strategy-chart")).toContain("Deduplication");
+    expect(page.getHtml("strategy-chart")).toContain("Truncation");
+    expect(page.getHtml("strategy-chart")).toContain("Code Filter");
+    expect(page.getHtml("strategy-chart")).toContain("55");
+  });
+
+  it("keeps the scope chart visible when savings exist without kept-out totals", async () => {
+    const page = createDashboardScriptHarness();
+
+    await page.flush();
+    page.dispatchSnapshot({
+      sessionId: "session-b",
+      projectPath: "/tmp/project-b",
+      context: { percent: 0.2 },
+      scopes: {
+        session: { tokensSavedApprox: 25, tokensKeptOutApprox: 0, turnCount: 2 },
+        project: { tokensSavedApprox: 40, tokensKeptOutApprox: 0, turnCount: 5 },
+        lifetime: { tokensSavedApprox: 75, tokensKeptOutApprox: 0, turnCount: 9 },
+      },
+      strategyTotals: {},
+    });
+
+    expect(page.getHtml("scope-chart")).toContain("25");
+    expect(page.getHtml("scope-chart")).toContain("40");
+    expect(page.getHtml("scope-chart")).toContain("75");
+    expect(page.getHtml("scope-chart")).not.toContain("No scope comparison yet.");
   });
 
   it("locks an initially unscoped page to the bootstrap snapshot before opening SSE", async () => {
@@ -715,7 +792,12 @@ describe("dashboard server", () => {
       sessionId: "session-a",
       projectPath: "/tmp/project-a",
       context: { percent: 0.42 },
-      scopes: { session: { tokensKeptOutApprox: 144, turnCount: 3 } },
+      scopes: {
+        session: { tokensSavedApprox: 55, tokensKeptOutApprox: 144, turnCount: 3 },
+        project: { tokensSavedApprox: 120, tokensKeptOutApprox: 320, turnCount: 8 },
+        lifetime: { tokensSavedApprox: 220, tokensKeptOutApprox: 640, turnCount: 14 },
+      },
+      strategyTotals: { short_circuit: 55, truncation: 18 },
     });
 
     expect(page.getText("session-id")).toBe("session-a");
@@ -724,6 +806,8 @@ describe("dashboard server", () => {
     expect(page.getText("kept-out")).toBe("144");
     expect(page.getText("turns")).toBe("3");
     expect(page.getText("impact-ledger")).toBe("No recent impact yet.");
+    expect(page.getHtml("scope-chart")).toContain("Session");
+    expect(page.getHtml("strategy-chart")).toContain("Short Circuit");
 
     page.dispatchSnapshot(null);
 
@@ -733,6 +817,8 @@ describe("dashboard server", () => {
     expect(page.getText("kept-out")).toBe("--");
     expect(page.getText("turns")).toBe("--");
     expect(page.getText("impact-ledger")).toBe("No recent impact yet.");
+    expect(page.getHtml("scope-chart")).toContain("No scope comparison yet.");
+    expect(page.getHtml("strategy-chart")).toContain("No strategy payoff yet.");
   });
 
   it("renders live impact updates as a human-readable feed", async () => {
