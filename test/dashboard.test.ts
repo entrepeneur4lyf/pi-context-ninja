@@ -40,6 +40,28 @@ async function readSseChunk(reader: ReadableStreamDefaultReader<Uint8Array>, tim
   return new TextDecoder().decode(result.value);
 }
 
+async function readSsePayload(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  maxChunks = 3,
+  timeoutMs = 100,
+): Promise<string> {
+  let payload = "";
+
+  for (let index = 0; index < maxChunks; index += 1) {
+    const chunk = await readSseChunk(reader, timeoutMs);
+    if (chunk === null) {
+      break;
+    }
+    payload += chunk;
+  }
+
+  return payload;
+}
+
+function countSseEventType(payload: string, type: string): number {
+  return (payload.match(new RegExp(`"type":"${type}"`, "g")) ?? []).length;
+}
+
 async function getAvailablePort(): Promise<number> {
   const probe = http.createServer();
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
@@ -50,6 +72,26 @@ async function getAvailablePort(): Promise<number> {
   const { port } = address;
   await new Promise<void>((resolve, reject) => probe.close((error) => (error ? reject(error) : resolve())));
   return port;
+}
+
+async function fetchJsonWithRetry(url: string, attempts = 20, delayMs = 25): Promise<any> {
+  let lastError: unknown;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error(`unexpected status ${response.status} for ${url}`);
+      }
+
+      return await response.json();
+    } catch (error) {
+      lastError = error;
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+
+  throw lastError;
 }
 
 function createDashboardScriptHarness({ search = "" }: { search?: string } = {}) {
@@ -255,17 +297,6 @@ describe("dashboard server", () => {
       getContextUsage: () => ({ tokens: 420, percent: 0.42, contextWindow: 1000 }),
     } as any;
 
-    await expect(
-      callsA.get("turn_end")?.(
-        {
-          turnIndex: 1,
-          message: { role: "assistant", content: "done" },
-          toolResults: [],
-        },
-        ctxA,
-      ),
-    ).resolves.toBeUndefined();
-
     const callsB = new Map<string, (...args: any[]) => unknown>();
     const piB = {
       on: vi.fn((name: string, handler: (...args: any[]) => unknown) => {
@@ -283,47 +314,61 @@ describe("dashboard server", () => {
       getContextUsage: () => ({ tokens: 300, percent: 0.3, contextWindow: 1000 }),
     } as any;
 
-    await expect(
-      callsB.get("turn_end")?.(
-        {
-          turnIndex: 2,
-          message: { role: "assistant", content: "done" },
-          toolResults: [],
-        },
-        ctxB,
-      ),
-    ).resolves.toBeUndefined();
+    try {
+      await expect(
+        callsA.get("turn_end")?.(
+          {
+            turnIndex: 1,
+            message: { role: "assistant", content: "done" },
+            toolResults: [],
+          },
+          ctxA,
+        ),
+      ).resolves.toBeUndefined();
 
-    const snapshotA = await fetch(`http://127.0.0.1:${port}/snapshot?sessionId=session-a`).then((res) => res.json());
-    expect(snapshotA.sessionId).toBe("session-a");
-    expect(snapshotA.totalTurns).toBe(1);
-    expect(snapshotA.context.tokens).toBe(420);
+      await expect(
+        callsB.get("turn_end")?.(
+          {
+            turnIndex: 2,
+            message: { role: "assistant", content: "done" },
+            toolResults: [],
+          },
+          ctxB,
+        ),
+      ).resolves.toBeUndefined();
 
-    const snapshotB = await fetch(`http://127.0.0.1:${port}/snapshot?sessionId=session-b`).then((res) => res.json());
-    expect(snapshotB.sessionId).toBe("session-b");
-    expect(snapshotB.totalTurns).toBe(1);
-    expect(snapshotB.context.tokens).toBe(300);
-    expect(snapshotB.totals.tokensKeptOutApprox).toBe(0);
+      const snapshotA = await fetchJsonWithRetry(`http://127.0.0.1:${port}/snapshot?sessionId=session-a`);
+      expect(snapshotA.sessionId).toBe("session-a");
+      expect(snapshotA.scopes.session.turnCount).toBe(1);
+      expect(snapshotA.context.tokens).toBe(420);
 
-    const defaultRedirect = await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
-    expect(defaultRedirect.status).toBe(302);
-    expect(defaultRedirect.headers.get("location")).toBe("/?sessionId=session-b");
+      const snapshotB = await fetchJsonWithRetry(`http://127.0.0.1:${port}/snapshot?sessionId=session-b`);
+      expect(snapshotB.sessionId).toBe("session-b");
+      expect(snapshotB.scopes.session.turnCount).toBe(1);
+      expect(snapshotB.context.tokens).toBe(300);
+      expect(snapshotB.scopes.session.tokensKeptOutApprox).toBe(0);
 
-    await expect(callsB.get("session_shutdown")?.({}, ctxB)).resolves.toBeUndefined();
+      const defaultRedirect = await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
+      expect(defaultRedirect.status).toBe(302);
+      expect(defaultRedirect.headers.get("location")).toBe("/?sessionId=session-b");
 
-    const fallbackRedirect = await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
-    expect(fallbackRedirect.status).toBe(302);
-    expect(fallbackRedirect.headers.get("location")).toBe("/?sessionId=session-a");
+      await expect(callsB.get("session_shutdown")?.({}, ctxB)).resolves.toBeUndefined();
 
-    const fallbackSnapshot = await fetch(`http://127.0.0.1:${port}/snapshot?sessionId=session-a`).then((res) => res.json());
-    expect(fallbackSnapshot.sessionId).toBe("session-a");
-    expect(fallbackSnapshot.totalTurns).toBe(1);
-    expect(fallbackSnapshot.context.tokens).toBe(420);
+      const fallbackRedirect = await fetch(`http://127.0.0.1:${port}/`, { redirect: "manual" });
+      expect(fallbackRedirect.status).toBe(302);
+      expect(fallbackRedirect.headers.get("location")).toBe("/?sessionId=session-a");
 
-    const clearedSnapshot = await fetch(`http://127.0.0.1:${port}/snapshot?sessionId=session-b`).then((res) => res.json());
-    expect(clearedSnapshot).toBeNull();
+      const fallbackSnapshot = await fetchJsonWithRetry(`http://127.0.0.1:${port}/snapshot?sessionId=session-a`);
+      expect(fallbackSnapshot.sessionId).toBe("session-a");
+      expect(fallbackSnapshot.scopes.session.turnCount).toBe(1);
+      expect(fallbackSnapshot.context.tokens).toBe(420);
 
-    await expect(callsA.get("session_shutdown")?.({}, ctxA)).resolves.toBeUndefined();
+      const clearedSnapshot = await fetchJsonWithRetry(`http://127.0.0.1:${port}/snapshot?sessionId=session-b`);
+      expect(clearedSnapshot).toBeNull();
+    } finally {
+      await expect(callsB.get("session_shutdown")?.({}, ctxB)).resolves.toBeUndefined();
+      await expect(callsA.get("session_shutdown")?.({}, ctxA)).resolves.toBeUndefined();
+    }
   });
 
   it("only delivers SSE snapshots to clients subscribed to that session", async () => {
@@ -386,6 +431,199 @@ describe("dashboard server", () => {
       });
 
       expect(await readSseChunk(reader)).toBeNull();
+      await reader.cancel();
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("returns recent dashboard impact history separately from the snapshot", async () => {
+    const server = startDashboardServer({ port: 0, host: "127.0.0.1" });
+    await once(server.server, "listening");
+
+    try {
+      const address = server.server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("expected a bound TCP address");
+      }
+
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      server.publish("session-history", {
+        generatedAt: 1713081600000,
+        sessionId: "session-history",
+        projectPath: "/tmp/project-history",
+        context: {
+          tokens: 420,
+          percent: 0.42,
+          window: 1000,
+        },
+        scopes: {
+          session: { scope: "session", tokensSavedApprox: 12, tokensKeptOutApprox: 24, turnCount: 2 },
+          project: { scope: "project", tokensSavedApprox: 12, tokensKeptOutApprox: 24, turnCount: 2 },
+          lifetime: { scope: "lifetime", tokensSavedApprox: 12, tokensKeptOutApprox: 24, turnCount: 2 },
+        },
+        strategyTotals: {
+          short_circuit: 12,
+        },
+        recentImpactEvents: [
+          {
+            timestamp: 1713081600000,
+            sessionId: "session-history",
+            projectPath: "/tmp/project-history",
+            source: "turn_end",
+            toolName: "read",
+            strategy: "short_circuit",
+            tokensSavedApprox: 12,
+            tokensKeptOutApprox: 24,
+            contextPercent: 0.42,
+            summary: "Short-circuited repeated read output.",
+          },
+          {
+            timestamp: 1713081500000,
+            sessionId: "session-history",
+            projectPath: "/tmp/project-history",
+            source: "turn_end",
+            toolName: "grep",
+            strategy: "deduplication",
+            tokensSavedApprox: 5,
+            tokensKeptOutApprox: 10,
+            contextPercent: 0.38,
+            summary: "Deduplicated repeated grep output.",
+          },
+        ],
+      });
+
+      const history = await fetch(`${baseUrl}/history?sessionId=session-history`).then((res) => res.json());
+
+      expect(history).toEqual([
+        expect.objectContaining({
+          strategy: "short_circuit",
+          tokensSavedApprox: 12,
+          summary: "Short-circuited repeated read output.",
+        }),
+        expect.objectContaining({
+          strategy: "deduplication",
+          tokensSavedApprox: 5,
+          summary: "Deduplicated repeated grep output.",
+        }),
+      ]);
+    } finally {
+      await server.close();
+    }
+  });
+
+  it("sends current snapshot first and then streams live impact events over SSE", async () => {
+    const server = startDashboardServer({ port: 0, host: "127.0.0.1" });
+    await once(server.server, "listening");
+
+    try {
+      const address = server.server.address();
+      if (!address || typeof address === "string") {
+        throw new Error("expected a bound TCP address");
+      }
+
+      const baseUrl = `http://127.0.0.1:${address.port}`;
+      server.publish("session-sse-impact", {
+        generatedAt: 1713081600000,
+        sessionId: "session-sse-impact",
+        projectPath: "/tmp/project-sse-impact",
+        context: {
+          tokens: 420,
+          percent: 0.42,
+          window: 1000,
+        },
+        scopes: {
+          session: { scope: "session", tokensSavedApprox: 12, tokensKeptOutApprox: 24, turnCount: 2 },
+          project: { scope: "project", tokensSavedApprox: 12, tokensKeptOutApprox: 24, turnCount: 2 },
+          lifetime: { scope: "lifetime", tokensSavedApprox: 12, tokensKeptOutApprox: 24, turnCount: 2 },
+        },
+        strategyTotals: {
+          short_circuit: 12,
+        },
+        recentImpactEvents: [
+          {
+            timestamp: 1713081600000,
+            sessionId: "session-sse-impact",
+            projectPath: "/tmp/project-sse-impact",
+            source: "turn_end",
+            toolName: "read",
+            strategy: "short_circuit",
+            tokensSavedApprox: 12,
+            tokensKeptOutApprox: 24,
+            contextPercent: 0.42,
+            summary: "Short-circuited repeated read output.",
+          },
+        ],
+      });
+
+      const response = await fetch(`${baseUrl}/events?sessionId=session-sse-impact`);
+      const reader = response.body?.getReader();
+      if (!reader) {
+        throw new Error("expected SSE response body");
+      }
+
+      const initial = await readSseChunk(reader, 250);
+      expect(initial).not.toBeNull();
+      expect(initial).toContain('"type":"connected"');
+      expect(initial).toContain('"type":"snapshot"');
+      expect(initial).toContain('"type":"impact"');
+      expect(initial?.indexOf('"type":"snapshot"')).toBeGreaterThan(initial?.indexOf('"type":"connected"') ?? -1);
+      expect(initial?.indexOf('"type":"impact"')).toBeGreaterThan(initial?.indexOf('"type":"snapshot"') ?? -1);
+
+      server.publish("session-sse-impact", {
+        generatedAt: 1713081700000,
+        sessionId: "session-sse-impact",
+        projectPath: "/tmp/project-sse-impact",
+        context: {
+          tokens: 400,
+          percent: 0.4,
+          window: 1000,
+        },
+        scopes: {
+          session: { scope: "session", tokensSavedApprox: 15, tokensKeptOutApprox: 28, turnCount: 3 },
+          project: { scope: "project", tokensSavedApprox: 15, tokensKeptOutApprox: 28, turnCount: 3 },
+          lifetime: { scope: "lifetime", tokensSavedApprox: 15, tokensKeptOutApprox: 28, turnCount: 3 },
+        },
+        strategyTotals: {
+          short_circuit: 15,
+        },
+        recentImpactEvents: [
+          {
+            timestamp: 1713081700000,
+            sessionId: "session-sse-impact",
+            projectPath: "/tmp/project-sse-impact",
+            source: "turn_end",
+            toolName: "grep",
+            strategy: "short_circuit",
+            tokensSavedApprox: 3,
+            tokensKeptOutApprox: 4,
+            contextPercent: 0.4,
+            summary: "Short-circuited repeated grep output.",
+          },
+          {
+            timestamp: 1713081600000,
+            sessionId: "session-sse-impact",
+            projectPath: "/tmp/project-sse-impact",
+            source: "turn_end",
+            toolName: "read",
+            strategy: "short_circuit",
+            tokensSavedApprox: 12,
+            tokensKeptOutApprox: 24,
+            contextPercent: 0.42,
+            summary: "Short-circuited repeated read output.",
+          },
+        ],
+      });
+
+      const next = await readSsePayload(reader, 3, 250);
+      expect(next).toContain('"type":"snapshot"');
+      expect(next).toContain('"type":"impact"');
+      expect(next).toContain('"summary":"Short-circuited repeated grep output."');
+      expect(next).toContain('"tokens":400');
+      expect(next).toContain('"turnCount":3');
+      expect(countSseEventType(next, "impact")).toBe(1);
+      expect(next.indexOf('"type":"snapshot"')).toBeLessThan(next.indexOf('"type":"impact"'));
+
       await reader.cancel();
     } finally {
       await server.close();
@@ -503,8 +741,8 @@ describe("runtime integration", () => {
           ctx,
         );
 
-        const firstSnapshot = await fetch(`http://127.0.0.1:${port}/snapshot?sessionId=${sessionId}`).then((res) => res.json());
-        expect(firstSnapshot.totalTurns).toBe(1);
+        const firstSnapshot = await fetchJsonWithRetry(`http://127.0.0.1:${port}/snapshot?sessionId=${sessionId}`);
+        expect(firstSnapshot.scopes.session.turnCount).toBe(1);
 
         await commands.get("pcn")?.handler(command, ctx);
 
@@ -592,14 +830,14 @@ describe("runtime integration", () => {
           ctxB,
         );
 
-        const firstSnapshot = await fetch(
+        const firstSnapshot = await fetchJsonWithRetry(
           `http://127.0.0.1:${port}/snapshot?sessionId=${ctxA.sessionManager.getSessionId()}`,
-        ).then((res) => res.json());
-        const secondSnapshot = await fetch(
+        );
+        const secondSnapshot = await fetchJsonWithRetry(
           `http://127.0.0.1:${port}/snapshot?sessionId=${ctxB.sessionManager.getSessionId()}`,
-        ).then((res) => res.json());
-        expect(firstSnapshot.totalTurns).toBe(1);
-        expect(secondSnapshot.totalTurns).toBe(1);
+        );
+        expect(firstSnapshot.scopes.session.turnCount).toBe(1);
+        expect(secondSnapshot.scopes.session.turnCount).toBe(1);
 
         await commands.get("pcn")?.handler(command, ctxA);
 
@@ -694,14 +932,14 @@ describe("runtime integration", () => {
           ctxB,
         );
 
-        const firstSnapshot = await fetch(
+        const firstSnapshot = await fetchJsonWithRetry(
           `http://127.0.0.1:${port}/snapshot?sessionId=${ctxA.sessionManager.getSessionId()}`,
-        ).then((res) => res.json());
-        const secondSnapshot = await fetch(
+        );
+        const secondSnapshot = await fetchJsonWithRetry(
           `http://127.0.0.1:${port}/snapshot?sessionId=${ctxB.sessionManager.getSessionId()}`,
-        ).then((res) => res.json());
-        expect(firstSnapshot.totalTurns).toBe(1);
-        expect(secondSnapshot.totalTurns).toBe(1);
+        );
+        expect(firstSnapshot.scopes.session.turnCount).toBe(1);
+        expect(secondSnapshot.scopes.session.turnCount).toBe(1);
 
         await commands.get("pcn")?.handler(command, ctxB);
 
@@ -766,10 +1004,10 @@ describe("runtime integration", () => {
         ctx,
       );
 
-      const firstSnapshot = await fetch(`http://127.0.0.1:${port}/snapshot?sessionId=session-project-disable-transition`).then(
-        (res) => res.json(),
+      const firstSnapshot = await fetchJsonWithRetry(
+        `http://127.0.0.1:${port}/snapshot?sessionId=session-project-disable-transition`,
       );
-      expect(firstSnapshot.totalTurns).toBe(1);
+      expect(firstSnapshot.scopes.session.turnCount).toBe(1);
 
       fs.writeFileSync(path.join(controlDir, ".pcn_disabled"), "", "utf8");
 
@@ -838,10 +1076,10 @@ describe("runtime integration", () => {
         ctx,
       );
 
-      const firstSnapshot = await fetch(
+      const firstSnapshot = await fetchJsonWithRetry(
         `http://127.0.0.1:${port}/snapshot?sessionId=session-dashboard-disable-transition`,
-      ).then((res) => res.json());
-      expect(firstSnapshot.totalTurns).toBe(1);
+      );
+      expect(firstSnapshot.scopes.session.turnCount).toBe(1);
 
       fs.writeFileSync(path.join(controlDir, ".pcn_dashboard_disabled"), "", "utf8");
 
@@ -966,10 +1204,10 @@ describe("runtime integration", () => {
       ctx,
     );
 
-    const snapshot = await fetch(`http://127.0.0.1:${port}/snapshot?sessionId=session-a`).then((res) => res.json());
-    expect(snapshot.totalTurns).toBe(1);
+    const snapshot = await fetchJsonWithRetry(`http://127.0.0.1:${port}/snapshot?sessionId=session-a`);
+    expect(snapshot.scopes.session.turnCount).toBe(1);
     expect(snapshot.context.tokens).toBe(420);
-    expect(snapshot.totals.tokensSavedApprox).toBeGreaterThanOrEqual(0);
+    expect(snapshot.scopes.session.tokensSavedApprox).toBeGreaterThanOrEqual(0);
 
     await piCalls.get("session_shutdown")?.({}, ctx);
 

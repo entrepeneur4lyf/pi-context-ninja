@@ -1,6 +1,6 @@
 import http, { type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { renderDashboardPage } from "./pages.js";
-import type { AnalyticsSnapshot } from "../analytics/types.js";
+import type { AnalyticsSnapshot, DashboardImpactEvent, DashboardSnapshot } from "../analytics/types.js";
 
 export interface DashboardServerOptions {
   port: number;
@@ -14,6 +14,7 @@ export interface DashboardServerHandle {
   clearSession(sessionId: string): void;
   close(): Promise<void>;
   snapshot(sessionId?: string): AnalyticsSnapshot | null;
+  history(sessionId?: string): DashboardImpactEvent[];
 }
 
 interface SseClient {
@@ -27,6 +28,33 @@ function normalizeSessionId(sessionId: string | null): string | null {
 
 function writeSse(res: ServerResponse, type: string, data: unknown): void {
   res.write(`data: ${JSON.stringify({ type, data })}\n\n`);
+}
+
+function isDashboardSnapshot(snapshot: AnalyticsSnapshot | null): snapshot is DashboardSnapshot {
+  return Array.isArray((snapshot as DashboardSnapshot | null)?.recentImpactEvents);
+}
+
+function getSnapshotHistory(snapshot: AnalyticsSnapshot | null): DashboardImpactEvent[] {
+  if (!isDashboardSnapshot(snapshot)) {
+    return [];
+  }
+
+  return snapshot.recentImpactEvents.map((event) => ({ ...event }));
+}
+
+function getImpactEventKey(event: DashboardImpactEvent): string {
+  return [
+    event.timestamp,
+    event.sessionId,
+    event.projectPath,
+    event.source,
+    event.toolName ?? "",
+    event.strategy,
+    event.tokensSavedApprox,
+    event.tokensKeptOutApprox,
+    event.contextPercent ?? "",
+    event.summary,
+  ].join("\u0000");
 }
 
 function normalizeOptions(
@@ -76,6 +104,10 @@ export function startDashboardServer(
     return activeSessionId ?? getLastSessionId();
   }
 
+  function getHistory(sessionId?: string): DashboardImpactEvent[] {
+    return getSnapshotHistory(getSnapshot(sessionId));
+  }
+
   function broadcastSnapshot(snapshot: AnalyticsSnapshot | null): void {
     for (const client of clients) {
       if (client.sessionId !== null) {
@@ -96,6 +128,26 @@ export function startDashboardServer(
       }
       try {
         writeSse(client.res, "snapshot", snapshot);
+      } catch {
+        clients.delete(client);
+      }
+    }
+  }
+
+  function broadcastImpactEvents(sessionId: string, impactEvents: DashboardImpactEvent[]): void {
+    if (impactEvents.length === 0) {
+      return;
+    }
+
+    for (const client of clients) {
+      if (client.sessionId !== null && client.sessionId !== sessionId) {
+        continue;
+      }
+
+      try {
+        for (const event of impactEvents) {
+          writeSse(client.res, "impact", event);
+        }
       } catch {
         clients.delete(client);
       }
@@ -129,6 +181,13 @@ export function startDashboardServer(
       return;
     }
 
+    if (requestUrl.pathname === "/history") {
+      const sessionId = normalizeSessionId(requestUrl.searchParams.get("sessionId"));
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify(getHistory(sessionId ?? undefined)));
+      return;
+    }
+
     if (requestUrl.pathname === "/events") {
       const sessionId = normalizeSessionId(requestUrl.searchParams.get("sessionId"));
       res.writeHead(200, {
@@ -141,6 +200,9 @@ export function startDashboardServer(
       const snapshot = getSnapshot(sessionId ?? undefined);
       if (snapshot !== null) {
         writeSse(res, "snapshot", snapshot);
+        for (const event of getSnapshotHistory(snapshot)) {
+          writeSse(res, "impact", event);
+        }
       }
       const client: SseClient = { res, sessionId };
       clients.add(client);
@@ -174,11 +236,16 @@ export function startDashboardServer(
     server,
     ready,
     publish(sessionId: string, snapshot: AnalyticsSnapshot): void {
+      const previousHistoryKeys = new Set(getHistory(sessionId).map(getImpactEventKey));
+      const nextHistory = getSnapshotHistory(snapshot);
+      const newImpactEvents = nextHistory.filter((event) => !previousHistoryKeys.has(getImpactEventKey(event)));
+
       activeSessionId = sessionId;
       snapshotsBySession.delete(sessionId);
       snapshotsBySession.set(sessionId, snapshot);
       broadcastSnapshot(snapshot);
       broadcastSessionSnapshot(sessionId, snapshot);
+      broadcastImpactEvents(sessionId, newImpactEvents);
     },
     clearSession(sessionId: string): void {
       const removedSnapshot = snapshotsBySession.get(sessionId) ?? null;
@@ -195,6 +262,9 @@ export function startDashboardServer(
     },
     snapshot(sessionId?: string): AnalyticsSnapshot | null {
       return getSnapshot(sessionId);
+    },
+    history(sessionId?: string): DashboardImpactEvent[] {
+      return getHistory(sessionId);
     },
     close(): Promise<void> {
       for (const client of clients) {
