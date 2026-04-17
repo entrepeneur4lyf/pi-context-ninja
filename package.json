@@ -3,6 +3,14 @@
   "version": "0.1.0",
   "type": "module",
   "description": "Silent-first context optimization extension for Pi",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ]
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
     "test": "vitest --run",
