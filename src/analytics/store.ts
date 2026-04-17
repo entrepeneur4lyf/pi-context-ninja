@@ -5,11 +5,13 @@ import type {
   AnalyticsStore,
   AnalyticsStoreOptions,
   AnalyticsTurnRecord,
+  AnalyticsTurnWrite,
   DashboardImpactEvent,
   DashboardSnapshot,
   LegacyAnalyticsSnapshot,
   AnalyticsTotals,
   AnalyticsScopeSummary,
+  StrategyImpactTotals,
 } from "./types.js";
 
 interface AnalyticsRow {
@@ -24,6 +26,25 @@ interface AnalyticsRow {
   context_window: number | null;
   tokens_saved_approx: number;
   tokens_kept_out_approx: number;
+}
+
+interface ImpactEventRow {
+  session_id: string;
+  project_path: string;
+  timestamp: number;
+  source: string;
+  tool_name: string | null;
+  strategy: string;
+  tokens_saved_approx: number;
+  tokens_kept_out_approx: number;
+  context_percent: number | null;
+  summary: string;
+}
+
+interface StrategyImpactTotalsRow {
+  strategy: string;
+  tokensSavedApprox: number;
+  tokensKeptOutApprox: number;
 }
 
 const CREATE_TABLE_SQL = `
@@ -46,6 +67,37 @@ const CREATE_TABLE_SQL = `
 const CREATE_INDEX_SQL = `
   CREATE INDEX IF NOT EXISTS turn_metrics_session_turn_idx
   ON turn_metrics(session_id, turn_index, timestamp);
+`;
+
+const CREATE_IMPACT_EVENTS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS impact_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL,
+    project_path TEXT NOT NULL,
+    timestamp INTEGER NOT NULL,
+    source TEXT NOT NULL,
+    tool_name TEXT,
+    strategy TEXT NOT NULL,
+    tokens_saved_approx INTEGER NOT NULL,
+    tokens_kept_out_approx INTEGER NOT NULL,
+    context_percent REAL,
+    summary TEXT NOT NULL
+  );
+`;
+
+const CREATE_IMPACT_EVENTS_INDEX_SQL = `
+  CREATE INDEX IF NOT EXISTS impact_events_session_timestamp_idx
+  ON impact_events(session_id, timestamp, id);
+`;
+
+const CREATE_STRATEGY_TOTALS_TABLE_SQL = `
+  CREATE TABLE IF NOT EXISTS strategy_totals (
+    session_id TEXT NOT NULL,
+    strategy TEXT NOT NULL,
+    tokens_saved_approx INTEGER NOT NULL,
+    tokens_kept_out_approx INTEGER NOT NULL,
+    PRIMARY KEY (session_id, strategy)
+  );
 `;
 
 function toTurnRecord(row: AnalyticsRow): AnalyticsTurnRecord {
@@ -104,18 +156,18 @@ function emptyTotals(): AnalyticsTotals {
   return { tokensSavedApprox: 0, tokensKeptOutApprox: 0 };
 }
 
-function buildImpactEvent(turn: AnalyticsTurnRecord): DashboardImpactEvent {
+function toImpactEvent(row: ImpactEventRow): DashboardImpactEvent {
   return {
-    timestamp: turn.timestamp,
-    sessionId: turn.sessionId,
-    projectPath: turn.projectPath,
-    source: "turn_metrics",
-    toolName: null,
-    strategy: "turn_metrics",
-    tokensSavedApprox: turn.tokensSavedApprox,
-    tokensKeptOutApprox: turn.tokensKeptOutApprox,
-    contextPercent: turn.contextPercent,
-    summary: `Recorded turn ${turn.turnIndex}`,
+    timestamp: row.timestamp,
+    sessionId: row.session_id,
+    projectPath: row.project_path,
+    source: row.source,
+    toolName: row.tool_name,
+    strategy: row.strategy,
+    tokensSavedApprox: row.tokens_saved_approx,
+    tokensKeptOutApprox: row.tokens_kept_out_approx,
+    contextPercent: row.context_percent,
+    summary: row.summary,
   };
 }
 
@@ -139,6 +191,9 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
   db.pragma("journal_mode = WAL");
   db.exec(CREATE_TABLE_SQL);
   db.exec(CREATE_INDEX_SQL);
+  db.exec(CREATE_IMPACT_EVENTS_TABLE_SQL);
+  db.exec(CREATE_IMPACT_EVENTS_INDEX_SQL);
+  db.exec(CREATE_STRATEGY_TOTALS_TABLE_SQL);
 
   const insertTurn = db.prepare(`
     INSERT INTO turn_metrics (
@@ -269,6 +324,84 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     LIMIT 1
   `);
 
+  const insertImpactEvent = db.prepare(`
+    INSERT INTO impact_events (
+      session_id,
+      project_path,
+      timestamp,
+      source,
+      tool_name,
+      strategy,
+      tokens_saved_approx,
+      tokens_kept_out_approx,
+      context_percent,
+      summary
+    ) VALUES (
+      @sessionId,
+      @projectPath,
+      @timestamp,
+      @source,
+      @toolName,
+      @strategy,
+      @tokensSavedApprox,
+      @tokensKeptOutApprox,
+      @contextPercent,
+      @summary
+    )
+  `);
+
+  const selectRecentImpactEvents = db.prepare<unknown[], ImpactEventRow>(`
+    SELECT
+      session_id,
+      project_path,
+      timestamp,
+      source,
+      tool_name,
+      strategy,
+      tokens_saved_approx,
+      tokens_kept_out_approx,
+      context_percent,
+      summary
+    FROM impact_events
+    WHERE session_id = ?
+    ORDER BY timestamp DESC, id DESC
+    LIMIT ?
+  `);
+
+  const selectStrategyImpactTotals = db.prepare<unknown[], StrategyImpactTotalsRow>(`
+    SELECT
+      strategy,
+      tokens_saved_approx AS tokensSavedApprox,
+      tokens_kept_out_approx AS tokensKeptOutApprox
+    FROM strategy_totals
+    WHERE session_id = ?
+  `);
+
+  const upsertStrategyTotals = db.prepare(`
+    INSERT INTO strategy_totals (
+      session_id,
+      strategy,
+      tokens_saved_approx,
+      tokens_kept_out_approx
+    ) VALUES (
+      @sessionId,
+      @strategy,
+      @tokensSavedApprox,
+      @tokensKeptOutApprox
+    )
+    ON CONFLICT(session_id, strategy) DO UPDATE SET
+      tokens_saved_approx = strategy_totals.tokens_saved_approx + excluded.tokens_saved_approx,
+      tokens_kept_out_approx = strategy_totals.tokens_kept_out_approx + excluded.tokens_kept_out_approx
+  `);
+
+  const writeTurn = db.transaction((turn: AnalyticsTurnWrite) => {
+    insertTurn.run(turn);
+    for (const event of sanitizeImpactEvents(turn.impactEvents)) {
+      insertImpactEvent.run(event);
+      upsertStrategyTotals.run(event);
+    }
+  });
+
   function pruneExpiredRows(retentionDays?: number): void {
     if (!retentionDays || retentionDays <= 0) {
       return;
@@ -276,6 +409,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
 
     const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
     db.prepare("DELETE FROM turn_metrics WHERE timestamp < ?").run(cutoff);
+    db.prepare("DELETE FROM impact_events WHERE timestamp < ?").run(cutoff);
   }
 
   function getRows(sessionId: string, limit = 50): AnalyticsRow[] {
@@ -320,6 +454,24 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     return row ? toTurnRecord(row) : null;
   }
 
+  function getImpactEvents(sessionId: string, limit = 50): DashboardImpactEvent[] {
+    return (selectRecentImpactEvents.all(sessionId, limit) as ImpactEventRow[]).map(toImpactEvent);
+  }
+
+  function getStrategyImpactTotals(sessionId: string): Record<string, StrategyImpactTotals> {
+    const rows = selectStrategyImpactTotals.all(sessionId) as StrategyImpactTotalsRow[];
+    const totals: Record<string, StrategyImpactTotals> = {};
+    for (const row of rows) {
+      if (row.tokensSavedApprox > 0 || row.tokensKeptOutApprox > 0) {
+        totals[row.strategy] = {
+          tokensSavedApprox: row.tokensSavedApprox,
+          tokensKeptOutApprox: row.tokensKeptOutApprox,
+        };
+      }
+    }
+    return totals;
+  }
+
   function readDashboardSnapshot(
     sessionId: string,
     projectPath: string | null,
@@ -343,14 +495,18 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
       lifetime: buildScopeSummary("lifetime", lifetimeTotals),
     };
 
+    const strategyImpactTotals = getStrategyImpactTotals(sessionId);
+
     return {
       generatedAt: snapshot.generatedAt,
       sessionId,
       projectPath: effectiveProjectPath,
       context: snapshot.context,
       scopes,
-      strategyTotals: {},
-      recentImpactEvents: snapshot.recentTurns.map(buildImpactEvent),
+      strategyTotals: Object.fromEntries(
+        Object.entries(strategyImpactTotals).map(([strategy, totals]) => [strategy, totals.tokensSavedApprox]),
+      ),
+      recentImpactEvents: getImpactEvents(sessionId, limit),
     };
   }
 
@@ -369,9 +525,9 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     };
   }
 
-  return {
-    recordTurn(turn: AnalyticsTurnRecord): DashboardSnapshot {
-      insertTurn.run(turn);
+  const store: AnalyticsStore = {
+    recordTurn(turn: AnalyticsTurnWrite): DashboardSnapshot {
+      writeTurn(turn);
       pruneExpiredRows(options.retentionDays);
       return readDashboardSnapshot(turn.sessionId, turn.projectPath);
     },
@@ -381,8 +537,28 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     getSnapshot(sessionId: string, limit = 50): LegacyAnalyticsSnapshot {
       return readLegacySnapshot(sessionId, limit);
     },
+    getStrategyImpactTotals(sessionId: string): Record<string, StrategyImpactTotals> {
+      return getStrategyImpactTotals(sessionId);
+    },
     close(): void {
       db.close();
     },
   };
+
+  return store;
+}
+
+function sanitizeImpactEvents(events: DashboardImpactEvent[] | undefined): DashboardImpactEvent[] {
+  if (!Array.isArray(events)) {
+    return [];
+  }
+
+  return events.filter((event) =>
+    (event.tokensSavedApprox > 0 || event.tokensKeptOutApprox > 0)
+    && typeof event.sessionId === "string"
+    && typeof event.projectPath === "string"
+    && typeof event.source === "string"
+    && typeof event.strategy === "string"
+    && typeof event.summary === "string"
+  );
 }

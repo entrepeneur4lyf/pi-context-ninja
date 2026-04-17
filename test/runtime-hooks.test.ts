@@ -1826,9 +1826,11 @@ describe("runtime hook registration", () => {
     config.dashboard.enabled = false;
 
     const brokenStore = {
+      getStrategyImpactTotals: vi.fn(() => ({})),
       recordTurn: vi.fn(() => {
         throw new Error("analytics write failed");
       }),
+      getDashboardSnapshot: vi.fn(),
       getSnapshot: vi.fn(),
       close: vi.fn(),
     };
@@ -1850,7 +1852,9 @@ describe("runtime hook registration", () => {
       recentTurns: [],
     };
     const healthyStore = {
+      getStrategyImpactTotals: vi.fn(() => ({})),
       recordTurn: vi.fn(() => healthySnapshot),
+      getDashboardSnapshot: vi.fn(() => healthySnapshot),
       getSnapshot: vi.fn(() => healthySnapshot),
       close: vi.fn(),
     };
@@ -1917,6 +1921,218 @@ describe("runtime hook registration", () => {
       expect(healthyStore.close).not.toHaveBeenCalled();
     } finally {
       vi.doUnmock("../src/analytics/store.js");
+      vi.resetModules();
+    }
+  });
+
+  it("publishes persisted nonzero dashboard impact events from runtime savings deltas", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = true;
+    config.analytics.dbPath = path.join(stateDir, "analytics.sqlite");
+    config.dashboard.enabled = true;
+    config.backgroundIndexing.enabled = false;
+    config.strategies.shortCircuit.enabled = true;
+    config.strategies.shortCircuit.minTokens = 0;
+    config.strategies.codeFilter.enabled = false;
+    config.strategies.truncation.enabled = false;
+    config.strategies.errorPurge.enabled = false;
+    config.strategies.deduplication.enabled = true;
+    config.strategies.deduplication.maxOccurrences = 1;
+
+    const dashboardHandle = {
+      ready: Promise.resolve(),
+      close: vi.fn(async () => {}),
+      clearSession: vi.fn(),
+      publish: vi.fn(),
+    };
+    const startDashboardServerMock = vi.fn(() => dashboardHandle);
+
+    vi.resetModules();
+    vi.doMock("../src/dashboard/server.js", () => ({
+      startDashboardServer: startDashboardServerMock,
+    }));
+
+    try {
+      const { createExtensionRuntime: createRuntimeWithMockedDashboard } = await import(
+        "../src/runtime/create-extension-runtime.js"
+      );
+
+      const { calls, pi } = createPiMock();
+      createRuntimeWithMockedDashboard(pi, config);
+
+      const ctx = createContext("session-impact-events");
+      const messages = [
+        {
+          role: "toolResult",
+          content: [{ type: "text", text: "{\"status\":\"ok\"}" }],
+          toolName: "read",
+          isError: false,
+          toolCallId: "read-1",
+        },
+        {
+          role: "toolResult",
+          content: [{ type: "text", text: "{\"status\":\"ok\"}" }],
+          toolName: "read",
+          isError: false,
+          toolCallId: "read-2",
+        },
+      ];
+
+      calls.get("tool_call")?.(
+        {
+          toolCallId: "read-1",
+          toolName: "read",
+          input: { path: "README.md" },
+        },
+        ctx,
+      );
+      calls.get("tool_call")?.(
+        {
+          toolCallId: "read-2",
+          toolName: "read",
+          input: { path: "README.md" },
+        },
+        ctx,
+      );
+
+      await calls.get("context")?.({ messages }, ctx);
+
+      await calls.get("turn_end")?.(
+        {
+          turnIndex: 0,
+          message: { role: "assistant", content: "done" },
+          toolResults: messages,
+        },
+        ctx,
+      );
+
+      expect(startDashboardServerMock).toHaveBeenCalledTimes(1);
+      expect(dashboardHandle.publish).toHaveBeenCalledTimes(1);
+      expect(dashboardHandle.publish).toHaveBeenCalledWith(
+        "session-impact-events",
+        expect.objectContaining({
+          strategyTotals: expect.objectContaining({
+            short_circuit: expect.any(Number),
+          }),
+          recentImpactEvents: expect.arrayContaining([
+            expect.objectContaining({
+              source: "runtime.materialize",
+              toolName: "read",
+              strategy: "short_circuit",
+              summary: expect.stringContaining("short_circuit"),
+            }),
+          ]),
+        }),
+      );
+
+      const publishedSnapshot: {
+        recentImpactEvents: Array<{ strategy: string; tokensSavedApprox: number; tokensKeptOutApprox: number }>;
+      } = dashboardHandle.publish.mock.calls[0][1];
+      expect(publishedSnapshot.recentImpactEvents.map((event) => event.strategy)).toEqual(["short_circuit"]);
+      expect(publishedSnapshot.recentImpactEvents.every((event) =>
+        event.tokensSavedApprox > 0 || event.tokensKeptOutApprox > 0
+      )).toBe(true);
+    } finally {
+      vi.doUnmock("../src/dashboard/server.js");
+      vi.resetModules();
+    }
+  });
+
+  it("does not re-emit historical impact after retention prunes old impact-event rows", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = true;
+    config.analytics.dbPath = path.join(stateDir, "analytics.sqlite");
+    config.analytics.retentionDays = 1;
+    config.dashboard.enabled = true;
+    config.backgroundIndexing.enabled = false;
+    config.strategies.shortCircuit.enabled = true;
+    config.strategies.shortCircuit.minTokens = 0;
+    config.strategies.codeFilter.enabled = false;
+    config.strategies.truncation.enabled = false;
+    config.strategies.errorPurge.enabled = false;
+    config.strategies.deduplication.enabled = false;
+
+    const dashboardHandle = {
+      ready: Promise.resolve(),
+      close: vi.fn(async () => {}),
+      clearSession: vi.fn(),
+      publish: vi.fn(),
+    };
+    const startDashboardServerMock = vi.fn(() => dashboardHandle);
+    const now = vi.spyOn(Date, "now");
+    const oneDayMs = 24 * 60 * 60 * 1000;
+
+    vi.resetModules();
+    vi.doMock("../src/dashboard/server.js", () => ({
+      startDashboardServer: startDashboardServerMock,
+    }));
+
+    try {
+      const { createExtensionRuntime: createRuntimeWithMockedDashboard } = await import(
+        "../src/runtime/create-extension-runtime.js"
+      );
+
+      const { calls, pi } = createPiMock();
+      createRuntimeWithMockedDashboard(pi, config);
+
+      const ctx = createContext("session-impact-retention");
+      const firstTurnMessages = [
+        {
+          role: "toolResult",
+          content: [{ type: "text", text: "{\"status\":\"ok\"}" }],
+          toolName: "read",
+          isError: false,
+          toolCallId: "read-1",
+        },
+      ] as const;
+
+      calls.get("tool_call")?.(
+        {
+          toolCallId: "read-1",
+          toolName: "read",
+          input: { path: "README.md" },
+        },
+        ctx,
+      );
+
+      await calls.get("context")?.({ messages: firstTurnMessages }, ctx);
+
+      now.mockImplementation(() => 1_000);
+      await calls.get("turn_end")?.(
+        {
+          turnIndex: 0,
+          message: { role: "assistant", content: "first" },
+          toolResults: firstTurnMessages,
+        },
+        ctx,
+      );
+
+      expect(dashboardHandle.publish).toHaveBeenCalledTimes(1);
+      const firstSnapshot: { recentImpactEvents: Array<{ strategy: string }> } = dashboardHandle.publish.mock.calls[0][1];
+      expect(firstSnapshot.recentImpactEvents.map((event) => event.strategy)).toEqual([
+        "short_circuit",
+      ]);
+
+      dashboardHandle.publish.mockClear();
+
+      now.mockImplementation(() => (2 * oneDayMs) + 1_000);
+      await calls.get("turn_end")?.(
+        {
+          turnIndex: 1,
+          message: { role: "assistant", content: "second" },
+          toolResults: [],
+        },
+        ctx,
+      );
+
+      expect(dashboardHandle.publish).toHaveBeenCalledTimes(1);
+      expect(dashboardHandle.publish.mock.calls[0][1].recentImpactEvents).toEqual([]);
+      expect(dashboardHandle.publish.mock.calls[0][1].strategyTotals).toEqual({
+        short_circuit: expect.any(Number),
+      });
+    } finally {
+      now.mockRestore();
+      vi.doUnmock("../src/dashboard/server.js");
       vi.resetModules();
     }
   });

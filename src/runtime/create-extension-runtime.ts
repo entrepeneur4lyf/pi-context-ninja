@@ -11,7 +11,7 @@ import { materializeContext } from "../strategies/materialize.js";
 import type { SessionState } from "../types.js";
 import { refreshRangeIndex } from "./index-manager.js";
 import { createAnalyticsStore } from "../analytics/store.js";
-import type { AnalyticsStore } from "../analytics/types.js";
+import type { AnalyticsStore, DashboardImpactEvent, StrategyImpactTotals, AnalyticsTurnWrite } from "../analytics/types.js";
 import { startDashboardServer, type DashboardServerHandle } from "../dashboard/server.js";
 import { buildCompactionSummary } from "../compression/index-entry.js";
 import { getIndexPath, readIndexEntries } from "../persistence/index-store.js";
@@ -303,6 +303,81 @@ function evictAnalyticsStore(sessionId: string): void {
   }
 }
 
+function getPersistedStrategyImpactTotals(
+  analyticsStore: AnalyticsStore | null,
+  sessionId: string,
+): Record<string, StrategyImpactTotals> {
+  if (!analyticsStore) {
+    return {};
+  }
+
+  return analyticsStore.getStrategyImpactTotals(sessionId);
+}
+
+function summarizeImpactEvent(
+  strategy: string,
+  toolName: string | null,
+  tokensSavedApprox: number,
+  tokensKeptOutApprox: number,
+): string {
+  const subject = toolName ? `${strategy} on ${toolName}` : strategy;
+  return `${subject} saved ${tokensSavedApprox} token(s) and kept ${tokensKeptOutApprox} token(s) out of context`;
+}
+
+function resolveImpactToolName(toolResults: ToolResultLike[]): string | null {
+  const toolNames = [...new Set(
+    toolResults
+      .map((toolResult) => (typeof toolResult.toolName === "string" ? toolResult.toolName : "").trim())
+      .filter((toolName) => toolName.length > 0),
+  )];
+
+  return toolNames.length === 1 ? toolNames[0] : null;
+}
+
+function buildDashboardImpactEvents(
+  sessionId: string,
+  state: SessionState,
+  analyticsStore: AnalyticsStore | null,
+  turn: {
+    timestamp: number;
+    toolResults: ToolResultLike[];
+  },
+): DashboardImpactEvent[] {
+  const persistedTotals = getPersistedStrategyImpactTotals(analyticsStore, sessionId);
+  const strategies = new Set([
+    ...Object.keys(state.tokensSavedByType),
+    ...Object.keys(state.tokensKeptOutByType),
+  ]);
+  const toolName = resolveImpactToolName(turn.toolResults);
+  const impactEvents: DashboardImpactEvent[] = [];
+
+  for (const strategy of strategies) {
+    const tokensSavedApprox =
+      Math.max(0, (state.tokensSavedByType[strategy] ?? 0) - (persistedTotals[strategy]?.tokensSavedApprox ?? 0));
+    const tokensKeptOutApprox =
+      Math.max(0, (state.tokensKeptOutByType[strategy] ?? 0) - (persistedTotals[strategy]?.tokensKeptOutApprox ?? 0));
+
+    if (tokensSavedApprox <= 0 && tokensKeptOutApprox <= 0) {
+      continue;
+    }
+
+    impactEvents.push({
+      timestamp: turn.timestamp,
+      sessionId,
+      projectPath: state.projectPath,
+      source: "runtime.materialize",
+      toolName,
+      strategy,
+      tokensSavedApprox,
+      tokensKeptOutApprox,
+      contextPercent: state.lastContextPercent,
+      summary: summarizeImpactEvent(strategy, toolName, tokensSavedApprox, tokensKeptOutApprox),
+    });
+  }
+
+  return impactEvents;
+}
+
 async function recordTurnAnalyticsSafely(
   sessionId: string,
   state: SessionState,
@@ -315,6 +390,7 @@ async function recordTurnAnalyticsSafely(
     timestamp: number;
     tokensSavedApprox: number;
     tokensKeptOutApprox: number;
+    toolResults: ToolResultLike[];
   },
 ): Promise<void> {
   if (!config.analytics.enabled) {
@@ -323,7 +399,11 @@ async function recordTurnAnalyticsSafely(
 
   try {
     const analyticsStore = getAnalyticsStore(sessionId, state, config);
-    const snapshot = analyticsStore?.recordTurn({
+    const impactEvents = buildDashboardImpactEvents(sessionId, state, analyticsStore, {
+      timestamp: turn.timestamp,
+      toolResults: turn.toolResults,
+    });
+    const turnRecord: AnalyticsTurnWrite = {
       sessionId,
       projectPath: state.projectPath,
       turnIndex: turn.turnIndex,
@@ -335,7 +415,9 @@ async function recordTurnAnalyticsSafely(
       contextWindow: state.lastContextWindow,
       tokensSavedApprox: turn.tokensSavedApprox,
       tokensKeptOutApprox: turn.tokensKeptOutApprox,
-    });
+      impactEvents,
+    };
+    const snapshot = analyticsStore?.recordTurn(turnRecord);
 
     if (!snapshot) {
       return;
@@ -571,6 +653,7 @@ export function createExtensionRuntime(
           timestamp: latestTurn.timestamp,
           tokensSavedApprox: latestTurn.tokensSavedDelta,
           tokensKeptOutApprox: latestTurn.tokensKeptOutDelta,
+          toolResults: event.toolResults,
         });
       }
     } finally {

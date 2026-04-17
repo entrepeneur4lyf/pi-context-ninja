@@ -1,11 +1,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createAnalyticsStore } from "../src/analytics/store.js";
 
 describe("analytics store", () => {
-  it("returns the planned dashboard snapshot contract from recordTurn", () => {
+  it("returns the planned dashboard snapshot contract from recordTurn without synthetic impact events", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-analytics-"));
     const dbPath = path.join(tmpDir, "analytics.sqlite");
     const timestamp = Date.now();
@@ -58,19 +58,7 @@ describe("analytics store", () => {
         },
         strategyTotals: {},
       });
-      expect(snapshot.recentImpactEvents).toHaveLength(1);
-      expect(snapshot.recentImpactEvents[0]).toMatchObject({
-        timestamp,
-        sessionId: "session-a",
-        projectPath: "/tmp/project",
-        source: "turn_metrics",
-        toolName: null,
-        strategy: "turn_metrics",
-        tokensSavedApprox: 88,
-        tokensKeptOutApprox: 144,
-        contextPercent: 0.42,
-        summary: "Recorded turn 3",
-      });
+      expect(snapshot.recentImpactEvents).toEqual([]);
 
       store.close();
     } finally {
@@ -78,7 +66,94 @@ describe("analytics store", () => {
     }
   });
 
-  it("preserves context percent without double scaling in dashboard impact events", () => {
+  it("persists only nonzero impact events and exposes session-scoped strategy totals", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-analytics-"));
+    const dbPath = path.join(tmpDir, "analytics.sqlite");
+    const timestamp = Date.now();
+
+    try {
+      const store = createAnalyticsStore({ dbPath, retentionDays: 30 });
+
+      store.recordTurn({
+        sessionId: "session-impact",
+        projectPath: "/tmp/project-impact",
+        turnIndex: 1,
+        toolCount: 2,
+        messageCountAfterTurn: 5,
+        timestamp,
+        contextTokens: 420,
+        contextPercent: 0.42,
+        contextWindow: 1000,
+        tokensSavedApprox: 13,
+        tokensKeptOutApprox: 31,
+        impactEvents: [
+          {
+            timestamp,
+            sessionId: "session-impact",
+            projectPath: "/tmp/project-impact",
+            source: "runtime.materialize",
+            toolName: "read",
+            strategy: "short_circuit",
+            tokensSavedApprox: 8,
+            tokensKeptOutApprox: 16,
+            contextPercent: 0.42,
+            summary: "short_circuit on read kept a known-success payload out of context",
+          },
+          {
+            timestamp: timestamp + 1,
+            sessionId: "session-impact",
+            projectPath: "/tmp/project-impact",
+            source: "runtime.materialize",
+            toolName: "read",
+            strategy: "dedup",
+            tokensSavedApprox: 5,
+            tokensKeptOutApprox: 15,
+            contextPercent: 0.42,
+            summary: "dedup on read collapsed repeated output",
+          },
+          {
+            timestamp: timestamp + 2,
+            sessionId: "session-impact",
+            projectPath: "/tmp/project-impact",
+            source: "runtime.materialize",
+            toolName: "read",
+            strategy: "truncation",
+            tokensSavedApprox: 0,
+            tokensKeptOutApprox: 0,
+            contextPercent: 0.42,
+            summary: "zero effect should not persist",
+          },
+        ],
+      });
+
+      const snapshot = store.getDashboardSnapshot("session-impact", "/tmp/project-impact");
+
+      expect(snapshot.strategyTotals).toEqual({
+        short_circuit: 8,
+        dedup: 5,
+      });
+      expect(snapshot.recentImpactEvents).toEqual([
+        expect.objectContaining({
+          strategy: "dedup",
+          tokensSavedApprox: 5,
+          tokensKeptOutApprox: 15,
+          summary: "dedup on read collapsed repeated output",
+        }),
+        expect.objectContaining({
+          strategy: "short_circuit",
+          tokensSavedApprox: 8,
+          tokensKeptOutApprox: 16,
+          summary: "short_circuit on read kept a known-success payload out of context",
+        }),
+      ]);
+
+      store.close();
+    } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("preserves context percent without double scaling in persisted dashboard impact events", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-analytics-"));
     const dbPath = path.join(tmpDir, "analytics.sqlite");
     const timestamp = Date.now();
@@ -98,6 +173,20 @@ describe("analytics store", () => {
         contextWindow: 1000,
         tokensSavedApprox: 12,
         tokensKeptOutApprox: 24,
+        impactEvents: [
+          {
+            timestamp,
+            sessionId: "session-percent",
+            projectPath: "/tmp/project-percent",
+            source: "runtime.materialize",
+            toolName: "read",
+            strategy: "short_circuit",
+            tokensSavedApprox: 12,
+            tokensKeptOutApprox: 24,
+            contextPercent: 0.375,
+            summary: "short_circuit on read preserved percent",
+          },
+        ],
       });
 
       expect(snapshot.context.percent).toBe(0.375);
@@ -105,6 +194,72 @@ describe("analytics store", () => {
 
       store.close();
     } finally {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps authoritative strategy totals after pruning old impact-event history", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-analytics-"));
+    const dbPath = path.join(tmpDir, "analytics.sqlite");
+    const now = vi.spyOn(Date, "now");
+    const oneDayMs = 24 * 60 * 60 * 1000;
+
+    try {
+      const store = createAnalyticsStore({ dbPath, retentionDays: 1 });
+
+      now.mockImplementation(() => 1_000);
+      store.recordTurn({
+        sessionId: "session-retention",
+        projectPath: "/tmp/project-retention",
+        turnIndex: 1,
+        toolCount: 1,
+        messageCountAfterTurn: 3,
+        timestamp: 1_000,
+        contextTokens: 100,
+        contextPercent: 0.1,
+        contextWindow: 1000,
+        tokensSavedApprox: 8,
+        tokensKeptOutApprox: 16,
+        impactEvents: [
+          {
+            timestamp: 1_000,
+            sessionId: "session-retention",
+            projectPath: "/tmp/project-retention",
+            source: "runtime.materialize",
+            toolName: "read",
+            strategy: "short_circuit",
+            tokensSavedApprox: 8,
+            tokensKeptOutApprox: 16,
+            contextPercent: 0.1,
+            summary: "first turn impact",
+          },
+        ],
+      });
+
+      now.mockImplementation(() => (2 * oneDayMs) + 1_000);
+      const snapshot = store.recordTurn({
+        sessionId: "session-retention",
+        projectPath: "/tmp/project-retention",
+        turnIndex: 2,
+        toolCount: 0,
+        messageCountAfterTurn: 4,
+        timestamp: 2 * oneDayMs,
+        contextTokens: 120,
+        contextPercent: 0.12,
+        contextWindow: 1000,
+        tokensSavedApprox: 8,
+        tokensKeptOutApprox: 16,
+        impactEvents: [],
+      });
+
+      expect(snapshot.recentImpactEvents).toEqual([]);
+      expect(snapshot.strategyTotals).toEqual({
+        short_circuit: 8,
+      });
+
+      store.close();
+    } finally {
+      now.mockRestore();
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }
   });
@@ -198,10 +353,7 @@ describe("analytics store", () => {
         },
       });
       expect(snapshot.strategyTotals).toEqual({});
-      expect(snapshot.recentImpactEvents.map((event) => event.summary)).toEqual([
-        "Recorded turn 2",
-        "Recorded turn 1",
-      ]);
+      expect(snapshot.recentImpactEvents).toEqual([]);
 
       store.close();
     } finally {

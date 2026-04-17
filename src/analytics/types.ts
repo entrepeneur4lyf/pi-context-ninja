@@ -43,6 +43,15 @@ export interface DashboardImpactEvent {
   summary: string;
 }
 
+export interface StrategyImpactTotals {
+  tokensSavedApprox: number;
+  tokensKeptOutApprox: number;
+}
+
+export interface AnalyticsTurnWrite extends AnalyticsTurnRecord {
+  impactEvents?: DashboardImpactEvent[];
+}
+
 export interface DashboardSnapshot {
   generatedAt: number;
   sessionId: string | null;
@@ -76,8 +85,9 @@ export interface AnalyticsStoreOptions {
 }
 
 export interface AnalyticsStore {
-  recordTurn(turn: AnalyticsTurnRecord): DashboardSnapshot;
+  recordTurn(turn: AnalyticsTurnWrite): DashboardSnapshot;
   getDashboardSnapshot(sessionId: string, projectPath: string, limit?: number): DashboardSnapshot;
+  getStrategyImpactTotals(sessionId: string): Record<string, StrategyImpactTotals>;
   getSnapshot(sessionId: string, limit?: number): LegacyAnalyticsSnapshot;
   close(): void;
 }
