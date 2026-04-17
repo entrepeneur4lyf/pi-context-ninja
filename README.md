@@ -1,17 +1,49 @@
 # Pi Context Ninja
 
-Silent-first context optimization extension for Pi 0.67.2.
+Silent-first context optimization package for Pi.
+
+```bash
+pi install https://github.com/entrepeneur4lyf/pi-context-ninja
+```
 
 Reduces context window usage automatically by compressing, deduplicating, and pruning tool results — with zero disruption to agent behavior.
 
-## Usage
+## Install
 
-```bash
-pi --extension src/index.ts
+Install as a Pi package with the command above.
+
+After install, Pi discovers the extension through this package's `package.json` `pi.extensions` manifest and loads it automatically.
+
+Check the current project state with:
+
+```text
+/pcn status
 ```
 
-The extension is configured via an optional YAML file (default: `~/.pi-ninja/config.yaml`). Set a custom path with `PCN_CONFIG_PATH`.
-This build targets Pi 0.67.2 directly and uses the real `tool_call`, `tool_result`, `context`, `before_agent_start`, `before_provider_request`, `turn_end`, `agent_end`, `session_before_compact`, and `session_shutdown` hooks.
+## Local Development
+
+```bash
+pi --extension ./src/index.ts
+```
+
+Use `--extension` for quick local testing from the repo root. This is the right path for development, but the normal user install path is `pi install <git-repo>`.
+
+The extension is configured via an optional YAML file at `~/.pi-ninja/config.yaml` by default. Set a custom path with `PCN_CONFIG_PATH`.
+
+## Runtime Model
+
+Pi Context Ninja has two layers:
+
+- **Control plane**: always available when the package is installed, including `/pcn status`, `/pcn doctor`, `/pcn export`, `/pcn enable`, and `/pcn disable`
+- **Data plane**: the silent-first runtime that hooks into Pi events and performs context shaping, analytics, dashboard publishing, and optional native compaction participation
+
+Project-local enablement lives under `.pi/.pi-ninja/`:
+
+- default: enabled
+- `.pi/.pi-ninja/.pcn_disabled`: disables Pi Context Ninja for the current project
+- `.pi/.pi-ninja/.pcn_dashboard_disabled`: disables dashboard publishing for the current project
+
+When the package is not discovered or loaded by Pi, neither the `/pcn` commands nor the runtime hooks are active.
 
 ## Configuration
 
@@ -153,6 +185,13 @@ pi-context-ninja/
 
 | Command | Description |
 | --- | --- |
+| `/pcn status` | Show current project status and effective runtime mode |
+| `/pcn doctor` | Show detailed diagnostics for the current project |
+| `/pcn export` | Export the latest diagnostic report to Markdown |
+| `/pcn enable` | Enable Pi Context Ninja for the current project |
+| `/pcn disable` | Disable Pi Context Ninja for the current project |
+| `/pcn enable dashboard` | Enable dashboard publishing for the current project |
+| `/pcn disable dashboard` | Disable dashboard publishing for the current project |
 | `npm run typecheck` | TypeScript type checking |
 | `npm run test` | Run test suite |
 | `npm run test:watch` | Run tests in watch mode |
