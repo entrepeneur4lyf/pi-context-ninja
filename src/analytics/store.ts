@@ -160,6 +160,7 @@ function buildSnapshot(
 
 interface AnalyticsTotalsRow {
   totalTurns: number;
+  totalToolCalls: number;
   tokensSavedApprox: number;
   tokensKeptOutApprox: number;
 }
@@ -257,6 +258,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
   const selectSessionTotals = db.prepare<unknown[], AnalyticsTotalsRow>(`
     SELECT
       COUNT(*) AS totalTurns,
+      COALESCE(SUM(tool_count), 0) AS totalToolCalls,
       COALESCE(SUM(tokens_saved_approx), 0) AS tokensSavedApprox,
       COALESCE(SUM(tokens_kept_out_approx), 0) AS tokensKeptOutApprox
     FROM turn_metrics
@@ -266,6 +268,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
   const selectProjectTotals = db.prepare<unknown[], AnalyticsTotalsRow>(`
     SELECT
       COUNT(*) AS totalTurns,
+      COALESCE(SUM(tool_count), 0) AS totalToolCalls,
       COALESCE(SUM(tokens_saved_approx), 0) AS tokensSavedApprox,
       COALESCE(SUM(tokens_kept_out_approx), 0) AS tokensKeptOutApprox
     FROM turn_metrics
@@ -275,6 +278,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
   const selectLifetimeTotals = db.prepare<unknown[], AnalyticsTotalsRow>(`
     SELECT
       COUNT(*) AS totalTurns,
+      COALESCE(SUM(tool_count), 0) AS totalToolCalls,
       COALESCE(SUM(tokens_saved_approx), 0) AS tokensSavedApprox,
       COALESCE(SUM(tokens_kept_out_approx), 0) AS tokensKeptOutApprox
     FROM turn_metrics
@@ -442,6 +446,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     if (scope === "session") {
       return (selectSessionTotals.get(value) as AnalyticsTotalsRow | undefined) ?? {
         totalTurns: 0,
+        totalToolCalls: 0,
         ...emptyTotals(),
       };
     }
@@ -449,12 +454,14 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     if (scope === "project" && typeof value === "string") {
       return (selectProjectTotals.get(value) as AnalyticsTotalsRow | undefined) ?? {
         totalTurns: 0,
+        totalToolCalls: 0,
         ...emptyTotals(),
       };
     }
 
     return (selectLifetimeTotals.get() as AnalyticsTotalsRow | undefined) ?? {
       totalTurns: 0,
+      totalToolCalls: 0,
       ...emptyTotals(),
     };
   }
@@ -505,7 +512,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     const projectTotals =
       typeof effectiveProjectPath === "string"
         ? getTotals("project", effectiveProjectPath)
-        : { totalTurns: 0, ...emptyTotals() };
+        : { totalTurns: 0, totalToolCalls: 0, ...emptyTotals() };
     const lifetimeTotals = getTotals("lifetime");
 
     const scopes = {
@@ -522,6 +529,10 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
       projectPath: effectiveProjectPath,
       context: snapshot.context,
       scopes,
+      live: {
+        turnCount: sessionTotals.totalTurns,
+        toolCallCount: sessionTotals.totalToolCalls,
+      },
       strategyTotals: Object.fromEntries(
         Object.entries(strategyImpactTotals).map(([strategy, totals]) => [strategy, totals.tokensSavedApprox]),
       ),

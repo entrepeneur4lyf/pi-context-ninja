@@ -134,7 +134,10 @@ function createDashboardScriptHarness({ search = "" }: { search?: string } = {})
 
   const elementEntries: Array<[string, ReturnType<typeof makeElement>]> = [
     ["session-id", makeElement("--")],
+    ["health-status", makeElement("Booting")],
     ["ctx-pct", makeElement("--%")],
+    ["live-turns", makeElement("--")],
+    ["live-tool-calls", makeElement("--")],
     ["ctx-window", makeElement("-- / --")],
     ["session-saved", makeElement("--")],
     ["project-saved", makeElement("--")],
@@ -204,6 +207,10 @@ function createDashboardScriptHarness({ search = "" }: { search?: string } = {})
                 tokensKeptOutApprox: 640,
                 turnCount: 14,
               },
+            },
+            live: {
+              turnCount: 3,
+              toolCallCount: 7,
             },
             strategyTotals: {
               short_circuit: 55,
@@ -356,7 +363,9 @@ describe("dashboard server", () => {
       expect(redirect.status).toBe(302);
       expect(redirect.headers.get("location")).toBe("/?sessionId=session-a");
 
-      const html = await fetch(`${baseUrl}/?sessionId=session-a`).then((res) => res.text());
+      const htmlResponse = await fetch(`${baseUrl}/?sessionId=session-a`);
+      expect(htmlResponse.headers.get("cache-control")).toBe("no-store");
+      const html = await htmlResponse.text();
       expect(html).toContain("Pi Context Ninja");
       expect(html).toContain("Control Tower");
       expect(html).toContain("Impact Ledger");
@@ -366,6 +375,7 @@ describe("dashboard server", () => {
       expect(html).not.toContain("<pre id=\"events\">");
 
       const response = await fetch(`${baseUrl}/events?sessionId=session-a`);
+      expect(response.headers.get("cache-control")).toBe("no-store");
       const reader = response.body?.getReader();
       if (!reader) {
         throw new Error("expected SSE response body");
@@ -582,6 +592,10 @@ describe("dashboard server", () => {
           project: { scope: "project", tokensSavedApprox: 12, tokensKeptOutApprox: 24, turnCount: 2 },
           lifetime: { scope: "lifetime", tokensSavedApprox: 12, tokensKeptOutApprox: 24, turnCount: 2 },
         },
+        live: {
+          turnCount: 2,
+          toolCallCount: 4,
+        },
         strategyTotals: {
           short_circuit: 12,
         },
@@ -613,7 +627,18 @@ describe("dashboard server", () => {
         ],
       });
 
-      const history = await fetch(`${baseUrl}/history?sessionId=session-history`).then((res) => res.json());
+      const snapshotResponse = await fetch(`${baseUrl}/snapshot?sessionId=session-history`);
+      expect(snapshotResponse.headers.get("cache-control")).toBe("no-store");
+      const snapshot = await snapshotResponse.json();
+      expect(snapshot).toEqual(
+        expect.objectContaining({
+          sessionId: "session-history",
+        }),
+      );
+
+      const historyResponse = await fetch(`${baseUrl}/history?sessionId=session-history`);
+      expect(historyResponse.headers.get("cache-control")).toBe("no-store");
+      const history = await historyResponse.json();
 
       expect(history).toEqual([
         expect.objectContaining({
@@ -656,6 +681,10 @@ describe("dashboard server", () => {
           session: { scope: "session", tokensSavedApprox: 12, tokensKeptOutApprox: 24, turnCount: 2 },
           project: { scope: "project", tokensSavedApprox: 12, tokensKeptOutApprox: 24, turnCount: 2 },
           lifetime: { scope: "lifetime", tokensSavedApprox: 12, tokensKeptOutApprox: 24, turnCount: 2 },
+        },
+        live: {
+          turnCount: 2,
+          toolCallCount: 3,
         },
         strategyTotals: {
           short_circuit: 12,
@@ -701,6 +730,10 @@ describe("dashboard server", () => {
           session: { scope: "session", tokensSavedApprox: 15, tokensKeptOutApprox: 28, turnCount: 3 },
           project: { scope: "project", tokensSavedApprox: 15, tokensKeptOutApprox: 28, turnCount: 3 },
           lifetime: { scope: "lifetime", tokensSavedApprox: 15, tokensKeptOutApprox: 28, turnCount: 3 },
+        },
+        live: {
+          turnCount: 3,
+          toolCallCount: 5,
         },
         strategyTotals: {
           short_circuit: 15,
@@ -751,7 +784,13 @@ describe("dashboard server", () => {
   it("renders scope and strategy chart panels in the control-tower shell", () => {
     const html = renderDashboardPage();
 
-    expect(html).toContain("Current Context");
+    expect(html).toContain("Health");
+    expect(html).toContain("Context %");
+    expect(html).toContain("Turns");
+    expect(html).toContain("Tool Calls");
+    expect(html).toContain('id="health-status"');
+    expect(html).toContain('id="live-turns"');
+    expect(html).toContain('id="live-tool-calls"');
     expect(html).toContain('id="ctx-window"');
     expect(html).toContain('id="session-saved"');
     expect(html).toContain('id="project-saved"');
@@ -772,7 +811,10 @@ describe("dashboard server", () => {
     expect(page.getEventSourceUrls()[0]).toContain("/events?sessionId=session-a&after=");
     expect(page.getText("session-id")).toBe("session-a");
     expect(page.getText("project-path")).toBe("/tmp/project-a");
+    expect(page.getText("health-status")).toBe("Live");
     expect(page.getText("ctx-pct")).toBe("37.5%");
+    expect(page.getText("live-turns")).toBe("3");
+    expect(page.getText("live-tool-calls")).toBe("7");
     expect(page.getText("ctx-window")).toBe("420 / 1,000");
     expect(page.getText("session-saved")).toBe("55");
     expect(page.getText("project-saved")).toBe("120");
@@ -821,6 +863,7 @@ describe("dashboard server", () => {
         project: { tokensSavedApprox: 40, tokensKeptOutApprox: 0, turnCount: 5 },
         lifetime: { tokensSavedApprox: 75, tokensKeptOutApprox: 0, turnCount: 9 },
       },
+      live: { turnCount: 2, toolCallCount: 9 },
       strategyTotals: {},
     });
 
@@ -843,6 +886,7 @@ describe("dashboard server", () => {
         project: { tokensSavedApprox: 0, tokensKeptOutApprox: 40, turnCount: 5 },
         lifetime: { tokensSavedApprox: 0, tokensKeptOutApprox: 70, turnCount: 9 },
       },
+      live: { turnCount: 2, toolCallCount: 4 },
       strategyTotals: {},
     });
 
@@ -876,12 +920,16 @@ describe("dashboard server", () => {
         project: { tokensSavedApprox: 120, tokensKeptOutApprox: 320, turnCount: 8 },
         lifetime: { tokensSavedApprox: 220, tokensKeptOutApprox: 640, turnCount: 14 },
       },
+      live: { turnCount: 3, toolCallCount: 7 },
       strategyTotals: { short_circuit: 55, truncation: 18 },
     });
 
     expect(page.getText("session-id")).toBe("session-a");
     expect(page.getText("project-path")).toBe("/tmp/project-a");
+    expect(page.getText("health-status")).toBe("Live");
     expect(page.getText("ctx-pct")).toBe("42.0%");
+    expect(page.getText("live-turns")).toBe("3");
+    expect(page.getText("live-tool-calls")).toBe("7");
     expect(page.getText("ctx-window")).toBe("-- / --");
     expect(page.getText("session-saved")).toBe("55");
     expect(page.getText("project-saved")).toBe("120");
@@ -895,7 +943,10 @@ describe("dashboard server", () => {
 
     expect(page.getText("session-id")).toBe("--");
     expect(page.getText("project-path")).toBe("--");
+    expect(page.getText("health-status")).toBe("--");
     expect(page.getText("ctx-pct")).toBe("--%");
+    expect(page.getText("live-turns")).toBe("--");
+    expect(page.getText("live-tool-calls")).toBe("--");
     expect(page.getText("ctx-window")).toBe("-- / --");
     expect(page.getText("session-saved")).toBe("--");
     expect(page.getText("project-saved")).toBe("--");
@@ -921,7 +972,7 @@ describe("dashboard server", () => {
       summary: "Short-circuited repeated grep output.",
     });
 
-    expect(page.getText("live-feed")).toContain("Short-circuited repeated grep output.");
+    expect(page.getText("live-feed")).toContain("Skipped repeated grep output");
     expect(page.getText("live-feed")).toContain("ctx 40.0%");
     expect(page.getText("live-feed")).not.toContain("\"strategy\"");
 
@@ -939,6 +990,31 @@ describe("dashboard server", () => {
     expect(page.getText("live-feed")).toContain("97.8k kept out of context");
     expect(page.getText("live-feed")).not.toContain("background_index on");
     expect(page.getText("live-feed")).not.toContain("token(s)");
+
+    page.dispatchImpact({
+      timestamp: 1713081710000,
+      toolName: "bash",
+      strategy: "error_purge",
+      tokensSavedApprox: 701,
+      tokensKeptOutApprox: 701,
+      contextPercent: 0.203,
+      summary: "error_purge on bash saved 701 token(s) and kept 701 token(s) out of context",
+    });
+
+    page.dispatchImpact({
+      timestamp: 1713081715000,
+      toolName: "bash",
+      strategy: "dedup",
+      tokensSavedApprox: 133,
+      tokensKeptOutApprox: 133,
+      contextPercent: 0.206,
+      summary: "dedup on bash saved 133 token(s) and kept 133 token(s) out of context",
+    });
+
+    expect(page.getText("live-feed")).toContain("Cleared stale bash error output");
+    expect(page.getText("live-feed")).toContain("Collapsed repeated bash output");
+    expect(page.getText("live-feed")).not.toContain("error_purge on");
+    expect(page.getText("live-feed")).not.toContain("dedup on");
   });
 
   it("renders the impact ledger inside a bounded scroll container", async () => {

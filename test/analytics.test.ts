@@ -56,6 +56,10 @@ describe("analytics store", () => {
             turnCount: 1,
           },
         },
+        live: {
+          turnCount: 1,
+          toolCallCount: 2,
+        },
         strategyTotals: {},
       });
       expect(snapshot.recentImpactEvents).toEqual([]);

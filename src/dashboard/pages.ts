@@ -106,7 +106,14 @@ export function renderDashboardPage(): string {
       display: grid;
       gap: 1rem;
       grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
-      margin-bottom: 1.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .ops-band {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      margin-bottom: 1.25rem;
     }
 
     .card,
@@ -148,6 +155,22 @@ export function renderDashboardPage(): string {
       display: grid;
       gap: 1rem;
       grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.95fr);
+    }
+
+    .status-live {
+      color: var(--good);
+    }
+
+    .status-stale {
+      color: #fbbf24;
+    }
+
+    .status-disconnected {
+      color: #fda4af;
+    }
+
+    .status-booting {
+      color: var(--muted);
     }
 
     .chart-grid {
@@ -319,6 +342,10 @@ export function renderDashboardPage(): string {
     }
 
     @media (max-width: 860px) {
+      .ops-band {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+
       .layout {
         grid-template-columns: 1fr;
       }
@@ -334,10 +361,6 @@ export function renderDashboardPage(): string {
     </header>
 
     <section class="summary-band" aria-label="Summary Band">
-      <article class="card">
-        <div class="card-label">Current Context</div>
-        <div id="ctx-pct" class="card-value">--%</div>
-      </article>
       <article class="card">
         <div class="card-label">Context Tokens / Window</div>
         <div id="ctx-window" class="card-value subtle">-- / --</div>
@@ -357,6 +380,25 @@ export function renderDashboardPage(): string {
       <article class="card">
         <div class="card-label">Recent Impacts</div>
         <div id="impact-count" class="card-value">--</div>
+      </article>
+    </section>
+
+    <section class="ops-band" aria-label="Live Session Status">
+      <article class="card">
+        <div class="card-label">Health</div>
+        <div id="health-status" class="card-value subtle status-booting">Booting</div>
+      </article>
+      <article class="card">
+        <div class="card-label">Context %</div>
+        <div id="ctx-pct" class="card-value">--%</div>
+      </article>
+      <article class="card">
+        <div class="card-label">Turns</div>
+        <div id="live-turns" class="card-value">--</div>
+      </article>
+      <article class="card">
+        <div class="card-label">Tool Calls</div>
+        <div id="live-tool-calls" class="card-value">--</div>
       </article>
     </section>
 
@@ -402,8 +444,11 @@ export function renderDashboardPage(): string {
 
   <script>
     const sessionIdEl = document.getElementById('session-id');
+    const healthStatusEl = document.getElementById('health-status');
     const projectPathEl = document.getElementById('project-path');
     const contextPctEl = document.getElementById('ctx-pct');
+    const liveTurnsEl = document.getElementById('live-turns');
+    const liveToolCallsEl = document.getElementById('live-tool-calls');
     const contextWindowEl = document.getElementById('ctx-window');
     const sessionSavedEl = document.getElementById('session-saved');
     const projectSavedEl = document.getElementById('project-saved');
@@ -418,6 +463,9 @@ export function renderDashboardPage(): string {
     let source;
     let liveFeedEntries = [];
     let latestHistoryImpactKey = null;
+    let lastActivityAt = null;
+    let connectionState = 'booting';
+    let healthTimer = null;
 
     function formatNumber(value) {
       return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : '--';
@@ -429,6 +477,47 @@ export function renderDashboardPage(): string {
       }
 
       return (value * 100).toFixed(1) + '%';
+    }
+
+    function setHealthStatus(label, className) {
+      healthStatusEl.textContent = label;
+      healthStatusEl.className = 'card-value subtle ' + className;
+    }
+
+    function refreshHealthStatus() {
+      if (connectionState === 'disconnected') {
+        setHealthStatus('Disconnected', 'status-disconnected');
+        return;
+      }
+
+      if (lastActivityAt === null) {
+        setHealthStatus('Booting', 'status-booting');
+        return;
+      }
+
+      if (Date.now() - lastActivityAt > 10000) {
+        setHealthStatus('Stale', 'status-stale');
+        return;
+      }
+
+      setHealthStatus('Live', 'status-live');
+    }
+
+    function scheduleHealthRefresh() {
+      if (healthTimer !== null) {
+        clearTimeout(healthTimer);
+      }
+
+      healthTimer = setTimeout(() => {
+        refreshHealthStatus();
+        scheduleHealthRefresh();
+      }, 1000);
+    }
+
+    function markActivity() {
+      lastActivityAt = Date.now();
+      connectionState = 'live';
+      refreshHealthStatus();
     }
 
     function escapeHtml(value) {
@@ -517,8 +606,24 @@ export function renderDashboardPage(): string {
         return 'Indexed older ' + toolName + ' output';
       }
 
-      if (typeof entry.summary === 'string' && entry.summary.length > 0) {
-        return entry.summary;
+      if (entry.strategy === 'error_purge') {
+        return 'Cleared stale ' + toolName + ' error output';
+      }
+
+      if (entry.strategy === 'dedup' || entry.strategy === 'deduplication') {
+        return 'Collapsed repeated ' + toolName + ' output';
+      }
+
+      if (entry.strategy === 'short_circuit') {
+        return 'Skipped repeated ' + toolName + ' output';
+      }
+
+      if (entry.strategy === 'code_filter') {
+        return 'Trimmed ' + toolName + ' code output';
+      }
+
+      if (entry.strategy === 'truncation') {
+        return 'Shortened oversized ' + toolName + ' output';
       }
 
       return describeImpactStrategy(entry.strategy || 'impact') + ' on ' + toolName;
@@ -616,8 +721,12 @@ export function renderDashboardPage(): string {
 
     function resetSnapshotStats() {
       sessionIdEl.textContent = '--';
+      healthStatusEl.textContent = '--';
+      healthStatusEl.className = 'card-value subtle';
       projectPathEl.textContent = '--';
       contextPctEl.textContent = '--%';
+      liveTurnsEl.textContent = '--';
+      liveToolCallsEl.textContent = '--';
       contextWindowEl.textContent = '-- / --';
       sessionSavedEl.textContent = '--';
       projectSavedEl.textContent = '--';
@@ -640,11 +749,14 @@ export function renderDashboardPage(): string {
       sessionIdEl.textContent = typeof snapshot.sessionId === 'string' && snapshot.sessionId.length > 0 ? snapshot.sessionId : '--';
       projectPathEl.textContent = typeof snapshot.projectPath === 'string' && snapshot.projectPath.length > 0 ? snapshot.projectPath : '--';
       contextPctEl.textContent = formatPercent(snapshot.context?.percent);
+      liveTurnsEl.textContent = formatNumber(snapshot.live?.turnCount ?? sessionScope?.turnCount);
+      liveToolCallsEl.textContent = formatNumber(snapshot.live?.toolCallCount);
       contextWindowEl.textContent = formatNumber(snapshot.context?.tokens) + ' / ' + formatNumber(snapshot.context?.window);
       sessionSavedEl.textContent = formatNumber(sessionScope?.tokensSavedApprox);
       projectSavedEl.textContent = formatNumber(projectScope?.tokensSavedApprox);
       lifetimeSavedEl.textContent = formatNumber(lifetimeScope?.tokensSavedApprox);
       impactCountEl.textContent = formatNumber(Array.isArray(snapshot?.recentImpactEvents) ? snapshot.recentImpactEvents.length : 0);
+      markActivity();
     }
 
     function renderScopeChart(snapshot) {
@@ -857,6 +969,10 @@ export function renderDashboardPage(): string {
     function connectEvents() {
       source = new EventSource(buildEventUrl());
       source.onmessage = handleMessage;
+      source.onerror = function () {
+        connectionState = 'disconnected';
+        refreshHealthStatus();
+      };
     }
 
     function handleMessage(event) {
@@ -876,10 +992,14 @@ export function renderDashboardPage(): string {
 
       if (payload.type === 'impact') {
         pushLiveFeedEntry(payload.data);
+        markActivity();
       }
     }
 
     async function bootstrap() {
+      refreshHealthStatus();
+      scheduleHealthRefresh();
+
       try {
         const snapshot = await fetchJson(buildSnapshotUrl());
         if (!currentSessionId && typeof snapshot?.sessionId === 'string' && snapshot.sessionId.length > 0) {

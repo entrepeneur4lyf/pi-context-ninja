@@ -2019,7 +2019,7 @@ describe("runtime hook registration", () => {
               source: "runtime.materialize",
               toolName: "read",
               strategy: "short_circuit",
-              summary: expect.stringContaining("short_circuit"),
+              summary: "Skipped repeated read output",
             }),
           ]),
         }),

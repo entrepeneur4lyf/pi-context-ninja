@@ -320,8 +320,27 @@ function summarizeImpactEvent(
   tokensSavedApprox: number,
   tokensKeptOutApprox: number,
 ): string {
-  const subject = toolName ? `${strategy} on ${toolName}` : strategy;
-  return `${subject} saved ${tokensSavedApprox} token(s) and kept ${tokensKeptOutApprox} token(s) out of context`;
+  const subject = typeof toolName === "string" && toolName.length > 0
+    ? toolName.replaceAll("_", " ")
+    : "tool output";
+
+  switch (strategy) {
+    case "background_index":
+      return `Indexed older ${subject} output`;
+    case "error_purge":
+      return `Cleared stale ${subject} error output`;
+    case "dedup":
+    case "deduplication":
+      return `Collapsed repeated ${subject} output`;
+    case "short_circuit":
+      return `Skipped repeated ${subject} output`;
+    case "code_filter":
+      return `Trimmed ${subject} code output`;
+    case "truncation":
+      return `Shortened oversized ${subject} output`;
+    default:
+      return `${strategy} affected ${subject}`;
+  }
 }
 
 function resolveImpactToolName(toolResults: ToolResultLike[]): string | null {

@@ -185,21 +185,30 @@ export function startDashboardServer(
           return;
         }
       }
-      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.writeHead(200, {
+        "Content-Type": "text/html; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
       res.end(renderDashboardPage());
       return;
     }
 
     if (requestUrl.pathname === "/snapshot") {
       const sessionId = normalizeSessionId(requestUrl.searchParams.get("sessionId"));
-      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      res.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
       res.end(JSON.stringify(getSnapshot(sessionId ?? undefined)));
       return;
     }
 
     if (requestUrl.pathname === "/history") {
       const sessionId = normalizeSessionId(requestUrl.searchParams.get("sessionId"));
-      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      res.writeHead(200, {
+        "Content-Type": "application/json; charset=utf-8",
+        "Cache-Control": "no-store",
+      });
       res.end(JSON.stringify(getHistory(sessionId ?? undefined)));
       return;
     }
@@ -209,7 +218,7 @@ export function startDashboardServer(
       const afterKey = requestUrl.searchParams.get("after");
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
-        "Cache-Control": "no-cache",
+        "Cache-Control": "no-store",
         Connection: "keep-alive",
       });
       res.write("retry: 1000\n");

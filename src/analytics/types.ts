@@ -48,6 +48,11 @@ export interface StrategyImpactTotals {
   tokensKeptOutApprox: number;
 }
 
+export interface DashboardLiveSnapshot {
+  turnCount: number;
+  toolCallCount: number;
+}
+
 export interface AnalyticsTurnWrite extends AnalyticsTurnRecord {
   impactEvents?: DashboardImpactEvent[];
 }
@@ -62,6 +67,7 @@ export interface DashboardSnapshot {
     project: AnalyticsScopeSummary;
     lifetime: AnalyticsScopeSummary;
   };
+  live: DashboardLiveSnapshot;
   strategyTotals: Record<string, number>;
   recentImpactEvents: DashboardImpactEvent[];
 }
