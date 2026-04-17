@@ -1,82 +1,422 @@
 export function renderDashboardPage(): string {
   return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>PCN Dashboard</title>
-<style>
-body{font-family:system-ui,sans-serif;margin:2rem;background:#111;color:#eee}
-h1{color:#4ade80}
-.stats{display:flex;gap:1rem;margin-bottom:2rem}
-.stat{flex:1;padding:1rem;background:#1e1e1e;border-radius:8px;text-align:center}
-.stat .val{font-size:2.5rem;color:#4ade80;font-weight:bold}
-.stat .label{color:#888;margin-top:.25rem}
-pre#events{background:#1a1a1a;padding:1rem;border-radius:8px;max-height:300px;overflow-y:auto;font-size:.85rem;white-space:pre-wrap}
-</style></head><body>
-<h1>Pi Context Ninja</h1>
-<div class="stats">
-  <div class="stat"><div id="session-id" class="val">--</div><div class="label">Session</div></div>
-  <div class="stat"><div id="ctx-pct" class="val">--%</div><div class="label">Context</div></div>
-  <div class="stat"><div id="kept-out" class="val">--</div><div class="label">Tokens Kept Out</div></div>
-  <div class="stat"><div id="turns" class="val">--</div><div class="label">Turns</div></div>
-</div>
-<h2>Live Events</h2>
-<pre id="events"></pre>
-<script>
-const events=document.getElementById('events');
-const sessionIdEl=document.getElementById('session-id');
-const contextPctEl=document.getElementById('ctx-pct');
-const keptOutEl=document.getElementById('kept-out');
-const turnsEl=document.getElementById('turns');
-let currentSessionId=new URLSearchParams(window.location.search).get('sessionId');
-let source;
-function buildEventUrl(){
-  if(typeof currentSessionId!=='string'||currentSessionId.length===0){
-    return '/events';
-  }
-  return '/events?sessionId='+encodeURIComponent(currentSessionId);
-}
-function bindToSession(sessionId){
-  if(typeof sessionId!=='string'||sessionId.length===0||sessionId===currentSessionId){
-    return;
-  }
-  currentSessionId=sessionId;
-  const params=new URLSearchParams(window.location.search);
-  params.set('sessionId',sessionId);
-  const nextSearch=params.toString();
-  const nextUrl=window.location.pathname+(nextSearch.length>0?'?'+nextSearch:'');
-  window.history.replaceState(null,'',nextUrl);
-  source?.close();
-  connectEvents();
-}
-function connectEvents(){
-  source=new EventSource(buildEventUrl());
-  source.onmessage=handleMessage;
-}
-function resetSnapshotStats(){
-  sessionIdEl.textContent='--';
-  contextPctEl.textContent='--%';
-  keptOutEl.textContent='--';
-  turnsEl.textContent='--';
-}
-function applySnapshotStats(d){
-  if(d==null){
-    resetSnapshotStats();
-    return;
-  }
-  sessionIdEl.textContent=typeof d.sessionId==='string'&&d.sessionId.length>0?d.sessionId:'--';
-  contextPctEl.textContent=d.context?.percent!=null?(d.context.percent*100).toFixed(1)+'%':'--%';
-  keptOutEl.textContent=d.totals?.tokensKeptOutApprox!=null?d.totals.tokensKeptOutApprox.toLocaleString():'--';
-  turnsEl.textContent=d.totalTurns!=null?d.totalTurns.toLocaleString():'--';
-}
-function handleMessage(event){
-  const payload=JSON.parse(event.data);
-  events.textContent+=payload.type+': '+JSON.stringify(payload.data)+'\\n';
-  events.scrollTop=events.scrollHeight;
-  if(payload.type==='snapshot'){
-    applySnapshotStats(payload.data);
-    if(!currentSessionId&&typeof payload.data?.sessionId==='string'&&payload.data.sessionId.length>0){
-      bindToSession(payload.data.sessionId);
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>PCN Dashboard</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #07111f;
+      --panel: rgba(10, 23, 40, 0.86);
+      --panel-strong: rgba(14, 31, 52, 0.95);
+      --border: rgba(122, 162, 203, 0.2);
+      --text: #e7f0fa;
+      --muted: #93a9bf;
+      --accent: #7dd3fc;
+      --accent-strong: #22d3ee;
+      --good: #86efac;
     }
-  }
-}
-connectEvents();
-</script></body></html>`;
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      background:
+        radial-gradient(circle at top left, rgba(34, 211, 238, 0.18), transparent 35%),
+        radial-gradient(circle at top right, rgba(125, 211, 252, 0.16), transparent 32%),
+        linear-gradient(180deg, #081220 0%, #050b14 100%);
+      color: var(--text);
+    }
+
+    main {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 2rem 1.25rem 3rem;
+    }
+
+    .hero {
+      display: grid;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+    }
+
+    .eyebrow {
+      margin: 0;
+      color: var(--accent);
+      font-size: 0.82rem;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(2rem, 4vw, 3.25rem);
+      line-height: 1;
+    }
+
+    .hero-copy {
+      margin: 0;
+      max-width: 52rem;
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    .summary-band {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      margin-bottom: 1.5rem;
+    }
+
+    .card,
+    .panel {
+      border: 1px solid var(--border);
+      background: var(--panel);
+      border-radius: 18px;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.28);
+      backdrop-filter: blur(18px);
+    }
+
+    .card {
+      padding: 1rem 1.1rem;
+    }
+
+    .card-label {
+      color: var(--muted);
+      font-size: 0.82rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+    }
+
+    .card-value {
+      margin-top: 0.5rem;
+      font-size: clamp(1.5rem, 3vw, 2.3rem);
+      font-weight: 700;
+      color: var(--accent-strong);
+      word-break: break-word;
+    }
+
+    .card-value.subtle {
+      color: var(--text);
+      font-size: 1rem;
+      line-height: 1.4;
+      font-weight: 600;
+    }
+
+    .layout {
+      display: grid;
+      gap: 1rem;
+      grid-template-columns: minmax(0, 1.25fr) minmax(0, 0.95fr);
+    }
+
+    .panel {
+      padding: 1.1rem;
+    }
+
+    .panel h2 {
+      margin: 0 0 0.8rem;
+      font-size: 1.1rem;
+    }
+
+    .panel-copy {
+      margin: -0.2rem 0 1rem;
+      color: var(--muted);
+      font-size: 0.92rem;
+      line-height: 1.45;
+    }
+
+    .stream {
+      display: grid;
+      gap: 0.75rem;
+      white-space: pre-wrap;
+      line-height: 1.45;
+      color: var(--text);
+    }
+
+    .stream.empty {
+      color: var(--muted);
+    }
+
+    .stream.live {
+      max-height: 340px;
+      overflow-y: auto;
+      padding-right: 0.2rem;
+    }
+
+    .metric {
+      color: var(--good);
+      font-weight: 600;
+    }
+
+    @media (max-width: 860px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header class="hero">
+      <p class="eyebrow">Pi Context Ninja</p>
+      <h1>Control Tower</h1>
+      <p class="hero-copy">Refresh-safe runtime telemetry for the current operator session. Rehydrate the latest snapshot and impact history first, then layer live updates on top.</p>
+    </header>
+
+    <section class="summary-band" aria-label="Summary Band">
+      <article class="card">
+        <div class="card-label">Session</div>
+        <div id="session-id" class="card-value">--</div>
+      </article>
+      <article class="card">
+        <div class="card-label">Project Path</div>
+        <div id="project-path" class="card-value subtle">--</div>
+      </article>
+      <article class="card">
+        <div class="card-label">Context Load</div>
+        <div id="ctx-pct" class="card-value">--%</div>
+      </article>
+      <article class="card">
+        <div class="card-label">Tokens Kept Out</div>
+        <div id="kept-out" class="card-value">--</div>
+      </article>
+      <article class="card">
+        <div class="card-label">Session Turns</div>
+        <div id="turns" class="card-value">--</div>
+      </article>
+    </section>
+
+    <section class="layout">
+      <article class="panel">
+        <h2>Impact Ledger</h2>
+        <p class="panel-copy">Recent operator-visible interventions, rendered as readable summaries instead of transport payloads.</p>
+        <div id="impact-ledger" class="stream empty">No recent impact yet.</div>
+      </article>
+
+      <article class="panel">
+        <h2>Live Feed</h2>
+        <p class="panel-copy">Fresh impact events arrive here after bootstrap. Snapshot updates keep the summary band in sync.</p>
+        <div id="live-feed" class="stream live empty">Waiting for live updates.</div>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const sessionIdEl = document.getElementById('session-id');
+    const projectPathEl = document.getElementById('project-path');
+    const contextPctEl = document.getElementById('ctx-pct');
+    const keptOutEl = document.getElementById('kept-out');
+    const turnsEl = document.getElementById('turns');
+    const impactLedgerEl = document.getElementById('impact-ledger');
+    const liveFeedEl = document.getElementById('live-feed');
+
+    let currentSessionId = new URLSearchParams(window.location.search).get('sessionId');
+    let source;
+    let liveFeedEntries = [];
+
+    function formatNumber(value) {
+      return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : '--';
+    }
+
+    function formatPercent(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return '--%';
+      }
+
+      const normalized = value <= 1 ? value * 100 : value;
+      return normalized.toFixed(1) + '%';
+    }
+
+    function resolveSessionScope(snapshot) {
+      return snapshot?.scopes?.session ?? {
+        tokensKeptOutApprox: snapshot?.totals?.tokensKeptOutApprox ?? null,
+        turnCount: snapshot?.totalTurns ?? null,
+      };
+    }
+
+    function buildSnapshotUrl() {
+      if (typeof currentSessionId !== 'string' || currentSessionId.length === 0) {
+        return '/snapshot';
+      }
+
+      return '/snapshot?sessionId=' + encodeURIComponent(currentSessionId);
+    }
+
+    function buildHistoryUrl() {
+      if (typeof currentSessionId !== 'string' || currentSessionId.length === 0) {
+        return '/history';
+      }
+
+      return '/history?sessionId=' + encodeURIComponent(currentSessionId);
+    }
+
+    function buildEventUrl() {
+      if (typeof currentSessionId !== 'string' || currentSessionId.length === 0) {
+        return '/events';
+      }
+
+      return '/events?sessionId=' + encodeURIComponent(currentSessionId);
+    }
+
+    function bindToSession(sessionId, reconnect) {
+      if (typeof sessionId !== 'string' || sessionId.length === 0 || sessionId === currentSessionId) {
+        return;
+      }
+
+      currentSessionId = sessionId;
+      const params = new URLSearchParams(window.location.search);
+      params.set('sessionId', sessionId);
+      const nextSearch = params.toString();
+      const nextUrl = window.location.pathname + (nextSearch.length > 0 ? '?' + nextSearch : '');
+      window.history.replaceState(null, '', nextUrl);
+
+      if (reconnect) {
+        source?.close();
+        connectEvents();
+      }
+    }
+
+    function resetSnapshotStats() {
+      sessionIdEl.textContent = '--';
+      projectPathEl.textContent = '--';
+      contextPctEl.textContent = '--%';
+      keptOutEl.textContent = '--';
+      turnsEl.textContent = '--';
+    }
+
+    function applySnapshotStats(snapshot) {
+      if (snapshot == null) {
+        resetSnapshotStats();
+        return;
+      }
+
+      const sessionScope = resolveSessionScope(snapshot);
+      sessionIdEl.textContent = typeof snapshot.sessionId === 'string' && snapshot.sessionId.length > 0 ? snapshot.sessionId : '--';
+      projectPathEl.textContent = typeof snapshot.projectPath === 'string' && snapshot.projectPath.length > 0 ? snapshot.projectPath : '--';
+      contextPctEl.textContent = formatPercent(snapshot.context?.percent);
+      keptOutEl.textContent = formatNumber(sessionScope?.tokensKeptOutApprox);
+      turnsEl.textContent = formatNumber(sessionScope?.turnCount);
+    }
+
+    function formatImpactEntry(entry) {
+      if (entry == null || typeof entry !== 'object') {
+        return 'Unknown impact event';
+      }
+
+      const summary = typeof entry.summary === 'string' && entry.summary.length > 0 ? entry.summary : 'Context impact recorded.';
+      const details = [];
+
+      if (typeof entry.toolName === 'string' && entry.toolName.length > 0) {
+        details.push(entry.toolName);
+      }
+      if (typeof entry.strategy === 'string' && entry.strategy.length > 0) {
+        details.push(entry.strategy);
+      }
+      if (typeof entry.tokensSavedApprox === 'number' && Number.isFinite(entry.tokensSavedApprox)) {
+        details.push('saved ' + entry.tokensSavedApprox.toLocaleString());
+      }
+      if (typeof entry.tokensKeptOutApprox === 'number' && Number.isFinite(entry.tokensKeptOutApprox)) {
+        details.push('kept ' + entry.tokensKeptOutApprox.toLocaleString());
+      }
+
+      const contextPercent = entry.contextPercent ?? entry.context?.percent ?? null;
+      if (typeof contextPercent === 'number' && Number.isFinite(contextPercent)) {
+        details.push('ctx ' + formatPercent(contextPercent));
+      }
+
+      return details.length > 0 ? summary + ' [' + details.join(' | ') + ']' : summary;
+    }
+
+    function renderImpactLedger(events) {
+      if (!Array.isArray(events) || events.length === 0) {
+        impactLedgerEl.textContent = 'No recent impact yet.';
+        impactLedgerEl.className = 'stream empty';
+        return;
+      }
+
+      impactLedgerEl.textContent = events.map(formatImpactEntry).join('\\n');
+      impactLedgerEl.className = 'stream';
+    }
+
+    function renderLiveFeed() {
+      if (liveFeedEntries.length === 0) {
+        liveFeedEl.textContent = 'Waiting for live updates.';
+        liveFeedEl.className = 'stream live empty';
+        return;
+      }
+
+      liveFeedEl.textContent = liveFeedEntries.join('\\n');
+      liveFeedEl.className = 'stream live';
+      liveFeedEl.scrollTop = liveFeedEl.scrollHeight;
+    }
+
+    function pushLiveFeedEntry(entry) {
+      liveFeedEntries.unshift(formatImpactEntry(entry));
+      if (liveFeedEntries.length > 12) {
+        liveFeedEntries = liveFeedEntries.slice(0, 12);
+      }
+      renderLiveFeed();
+    }
+
+    async function fetchJson(url) {
+      const response = await fetch(url);
+      if (!response.ok) {
+        throw new Error('Unexpected status for ' + url);
+      }
+
+      return response.json();
+    }
+
+    function connectEvents() {
+      source = new EventSource(buildEventUrl());
+      source.onmessage = handleMessage;
+    }
+
+    function handleMessage(event) {
+      const payload = JSON.parse(event.data);
+
+      if (payload.type === 'snapshot') {
+        applySnapshotStats(payload.data);
+        renderImpactLedger(Array.isArray(payload.data?.recentImpactEvents) ? payload.data.recentImpactEvents : []);
+
+        if (!currentSessionId && typeof payload.data?.sessionId === 'string' && payload.data.sessionId.length > 0) {
+          bindToSession(payload.data.sessionId, true);
+        }
+
+        return;
+      }
+
+      if (payload.type === 'impact') {
+        pushLiveFeedEntry(payload.data);
+      }
+    }
+
+    async function bootstrap() {
+      try {
+        const snapshot = await fetchJson(buildSnapshotUrl());
+        if (!currentSessionId && typeof snapshot?.sessionId === 'string' && snapshot.sessionId.length > 0) {
+          bindToSession(snapshot.sessionId, false);
+        }
+        applySnapshotStats(snapshot);
+      } catch {
+        resetSnapshotStats();
+      }
+
+      try {
+        const history = await fetchJson(buildHistoryUrl());
+        renderImpactLedger(history);
+      } catch {
+        renderImpactLedger([]);
+      }
+
+      renderLiveFeed();
+      connectEvents();
+    }
+
+    bootstrap();
+  </script>
+</body>
+</html>`;
 }

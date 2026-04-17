@@ -103,11 +103,13 @@ function createDashboardScriptHarness({ search = "" }: { search?: string } = {})
 
   const elements = new Map(
     [
-      ["events", { textContent: "", scrollTop: 0, scrollHeight: 0 }],
       ["session-id", { textContent: "--" }],
       ["ctx-pct", { textContent: "--%" }],
       ["kept-out", { textContent: "--" }],
       ["turns", { textContent: "--" }],
+      ["project-path", { textContent: "--" }],
+      ["impact-ledger", { textContent: "", innerHTML: "" }],
+      ["live-feed", { textContent: "", innerHTML: "", scrollTop: 0, scrollHeight: 0 }],
     ].map(([id, element]) => [id, element as { textContent: string; scrollTop?: number; scrollHeight?: number }]),
   );
 
@@ -116,6 +118,7 @@ function createDashboardScriptHarness({ search = "" }: { search?: string } = {})
     closed: boolean;
     onmessage: ((event: { data: string }) => void) | null;
   }> = [];
+  const fetchUrls: string[] = [];
   const replaceStateUrls: string[] = [];
   const location = {
     search,
@@ -133,9 +136,51 @@ function createDashboardScriptHarness({ search = "" }: { search?: string } = {})
 
   const context = {
     JSON,
+    Promise,
     URL,
     URLSearchParams,
     encodeURIComponent,
+    setTimeout,
+    clearTimeout,
+    fetch(url: string) {
+      fetchUrls.push(url);
+
+      if (url === "/snapshot?sessionId=session-a" || url === "/snapshot") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            sessionId: "session-a",
+            projectPath: "/tmp/project-a",
+            context: { percent: 0.375 },
+            scopes: {
+              session: {
+                tokensKeptOutApprox: 144,
+                turnCount: 3,
+              },
+            },
+          }),
+        });
+      }
+
+      if (url === "/history?sessionId=session-a" || url === "/history") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => [
+            {
+              timestamp: 1713081600000,
+              toolName: "read",
+              strategy: "short_circuit",
+              tokensSavedApprox: 12,
+              tokensKeptOutApprox: 24,
+              contextPercent: 0.375,
+              summary: "Short-circuited repeated read output.",
+            },
+          ],
+        });
+      }
+
+      throw new Error(`unexpected fetch url: ${url}`);
+    },
     EventSource: class {
       private source;
 
@@ -174,14 +219,18 @@ function createDashboardScriptHarness({ search = "" }: { search?: string } = {})
 
   vm.runInNewContext(scriptMatch[1], context);
 
-  if (!eventSources.at(-1)?.onmessage) {
-    throw new Error("expected EventSource onmessage handler");
-  }
-
   return {
+    async flush() {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    },
     dispatchSnapshot(data: unknown) {
       eventSources.at(-1)?.onmessage?.({
         data: JSON.stringify({ type: "snapshot", data }),
+      });
+    },
+    dispatchImpact(data: unknown) {
+      eventSources.at(-1)?.onmessage?.({
+        data: JSON.stringify({ type: "impact", data }),
       });
     },
     getText(id: string) {
@@ -190,6 +239,9 @@ function createDashboardScriptHarness({ search = "" }: { search?: string } = {})
         throw new Error(`missing test element: ${id}`);
       }
       return element.textContent;
+    },
+    getFetchUrls() {
+      return fetchUrls;
     },
     getEventSourceUrls() {
       return eventSources.map((source) => source.url);
@@ -239,11 +291,12 @@ describe("dashboard server", () => {
 
       const html = await fetch(`${baseUrl}/?sessionId=session-a`).then((res) => res.text());
       expect(html).toContain("Pi Context Ninja");
-      expect(html).toContain("URLSearchParams");
-      expect(html).toContain("Tokens Kept Out");
-      expect(html).toContain("Session");
+      expect(html).toContain("Control Tower");
+      expect(html).toContain("Impact Ledger");
+      expect(html).toContain("Live Feed");
       expect(html).toContain("session-id");
-      expect(html).not.toContain("Tokens Saved");
+      expect(html).toContain("impact-ledger");
+      expect(html).not.toContain("<pre id=\"events\">");
 
       const response = await fetch(`${baseUrl}/events?sessionId=session-a`);
       const reader = response.body?.getReader();
@@ -630,55 +683,75 @@ describe("dashboard server", () => {
     }
   });
 
-  it("subscribes to the sessionId in the page URL when present", () => {
+  it("bootstraps snapshot and history before subscribing to the scoped SSE stream", async () => {
     const page = createDashboardScriptHarness({ search: "?sessionId=session-a" });
 
+    await page.flush();
+
+    expect(page.getFetchUrls()).toEqual(["/snapshot?sessionId=session-a", "/history?sessionId=session-a"]);
+    expect(page.getEventSourceUrls()).toEqual(["/events?sessionId=session-a"]);
+    expect(page.getText("session-id")).toBe("session-a");
+    expect(page.getText("project-path")).toBe("/tmp/project-a");
+    expect(page.getText("ctx-pct")).toBe("37.5%");
+    expect(page.getText("impact-ledger")).toContain("Short-circuited repeated read output.");
+    expect(page.getText("impact-ledger")).toContain("ctx 37.5%");
+  });
+
+  it("locks an initially unscoped page to the bootstrap snapshot before opening SSE", async () => {
+    const page = createDashboardScriptHarness();
+
+    await page.flush();
+
+    expect(page.getReplaceStateUrls()).toEqual(["/?sessionId=session-a"]);
+    expect(page.getFetchUrls()).toEqual(["/snapshot", "/history?sessionId=session-a"]);
     expect(page.getEventSourceUrls()).toEqual(["/events?sessionId=session-a"]);
   });
 
-  it("locks an initially unscoped page to the first session snapshot it receives", () => {
+  it("resets stale dashboard stat fields when the next snapshot omits them", async () => {
     const page = createDashboardScriptHarness();
 
-    expect(page.getEventSourceUrls()).toEqual(["/events"]);
-
+    await page.flush();
     page.dispatchSnapshot({
       sessionId: "session-a",
+      projectPath: "/tmp/project-a",
       context: { percent: 0.42 },
-      totals: { tokensKeptOutApprox: 144 },
-      totalTurns: 3,
-    });
-
-    expect(page.getReplaceStateUrls()).toEqual(["/?sessionId=session-a"]);
-    expect(page.getClosedEventSourceUrls()).toEqual(["/events"]);
-    expect(page.getEventSourceUrls()).toEqual(["/events", "/events?sessionId=session-a"]);
-  });
-
-  it("resets stale dashboard stat fields when the next snapshot omits them", () => {
-    const page = createDashboardScriptHarness();
-
-    page.dispatchSnapshot({
-      sessionId: "session-a",
-      context: { percent: 0.42 },
-      totals: { tokensKeptOutApprox: 144 },
-      totalTurns: 3,
+      scopes: { session: { tokensKeptOutApprox: 144, turnCount: 3 } },
     });
 
     expect(page.getText("session-id")).toBe("session-a");
+    expect(page.getText("project-path")).toBe("/tmp/project-a");
     expect(page.getText("ctx-pct")).toBe("42.0%");
     expect(page.getText("kept-out")).toBe("144");
     expect(page.getText("turns")).toBe("3");
+    expect(page.getText("impact-ledger")).toBe("No recent impact yet.");
 
-    page.dispatchSnapshot({
-      sessionId: null,
-      context: { percent: null },
-      totals: { tokensKeptOutApprox: null },
-      totalTurns: null,
-    });
+    page.dispatchSnapshot(null);
 
     expect(page.getText("session-id")).toBe("--");
+    expect(page.getText("project-path")).toBe("--");
     expect(page.getText("ctx-pct")).toBe("--%");
     expect(page.getText("kept-out")).toBe("--");
     expect(page.getText("turns")).toBe("--");
+    expect(page.getText("impact-ledger")).toBe("No recent impact yet.");
+  });
+
+  it("renders live impact updates as a human-readable feed", async () => {
+    const page = createDashboardScriptHarness({ search: "?sessionId=session-a" });
+
+    await page.flush();
+    page.dispatchImpact({
+      timestamp: 1713081700000,
+      toolName: "grep",
+      strategy: "short_circuit",
+      tokensSavedApprox: 3,
+      tokensKeptOutApprox: 4,
+      contextPercent: 0.4,
+      summary: "Short-circuited repeated grep output.",
+    });
+
+    expect(page.getText("live-feed")).toContain("Short-circuited repeated grep output.");
+    expect(page.getText("live-feed")).toContain("ctx 40.0%");
+    expect(page.getText("live-feed")).not.toContain("\"strategy\"");
   });
 });
 
