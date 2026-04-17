@@ -23,7 +23,41 @@ export interface AnalyticsContextSnapshot {
   window: number | null;
 }
 
-export interface AnalyticsSnapshot {
+export interface AnalyticsScopeSummary {
+  scope: "session" | "project" | "lifetime";
+  tokensSavedApprox: number;
+  tokensKeptOutApprox: number;
+  turnCount: number;
+}
+
+export interface DashboardImpactEvent {
+  timestamp: number;
+  sessionId: string;
+  projectPath: string;
+  source: string;
+  toolName: string | null;
+  strategy: string;
+  tokensSavedApprox: number;
+  tokensKeptOutApprox: number;
+  contextPercent: number | null;
+  summary: string;
+}
+
+export interface DashboardSnapshot {
+  generatedAt: number;
+  sessionId: string | null;
+  projectPath: string | null;
+  context: AnalyticsContextSnapshot;
+  scopes: {
+    session: AnalyticsScopeSummary;
+    project: AnalyticsScopeSummary;
+    lifetime: AnalyticsScopeSummary;
+  };
+  strategyTotals: Record<string, number>;
+  recentImpactEvents: DashboardImpactEvent[];
+}
+
+export interface LegacyAnalyticsSnapshot {
   generatedAt: number;
   sessionId: string | null;
   projectPath: string | null;
@@ -34,13 +68,16 @@ export interface AnalyticsSnapshot {
   recentTurns: AnalyticsTurnRecord[];
 }
 
+export type AnalyticsSnapshot = DashboardSnapshot | LegacyAnalyticsSnapshot;
+
 export interface AnalyticsStoreOptions {
   dbPath: string;
   retentionDays?: number;
 }
 
 export interface AnalyticsStore {
-  recordTurn(turn: AnalyticsTurnRecord): AnalyticsSnapshot;
-  getSnapshot(sessionId: string, limit?: number): AnalyticsSnapshot;
+  recordTurn(turn: AnalyticsTurnRecord): DashboardSnapshot;
+  getDashboardSnapshot(sessionId: string, projectPath: string, limit?: number): DashboardSnapshot;
+  getSnapshot(sessionId: string, limit?: number): LegacyAnalyticsSnapshot;
   close(): void;
 }

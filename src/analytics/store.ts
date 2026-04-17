@@ -2,11 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import Database from "better-sqlite3";
 import type {
-  AnalyticsSnapshot,
   AnalyticsStore,
   AnalyticsStoreOptions,
   AnalyticsTurnRecord,
+  DashboardImpactEvent,
+  DashboardSnapshot,
+  LegacyAnalyticsSnapshot,
   AnalyticsTotals,
+  AnalyticsScopeSummary,
 } from "./types.js";
 
 interface AnalyticsRow {
@@ -61,7 +64,10 @@ function toTurnRecord(row: AnalyticsRow): AnalyticsTurnRecord {
   };
 }
 
-function buildSnapshot(rows: AnalyticsRow[], sessionId: string): AnalyticsSnapshot {
+function buildSnapshot(
+  rows: AnalyticsRow[],
+  sessionId: string,
+): LegacyAnalyticsSnapshot {
   const recentTurns = rows.map(toTurnRecord);
   const latestTurn = recentTurns[0] ?? null;
   const totals: AnalyticsTotals = recentTurns.reduce(
@@ -85,6 +91,43 @@ function buildSnapshot(rows: AnalyticsRow[], sessionId: string): AnalyticsSnapsh
     },
     latestTurn,
     recentTurns,
+  };
+}
+
+interface AnalyticsTotalsRow {
+  totalTurns: number;
+  tokensSavedApprox: number;
+  tokensKeptOutApprox: number;
+}
+
+function emptyTotals(): AnalyticsTotals {
+  return { tokensSavedApprox: 0, tokensKeptOutApprox: 0 };
+}
+
+function buildImpactEvent(turn: AnalyticsTurnRecord): DashboardImpactEvent {
+  return {
+    timestamp: turn.timestamp,
+    sessionId: turn.sessionId,
+    projectPath: turn.projectPath,
+    source: "turn_metrics",
+    toolName: null,
+    strategy: "turn_metrics",
+    tokensSavedApprox: turn.tokensSavedApprox,
+    tokensKeptOutApprox: turn.tokensKeptOutApprox,
+    contextPercent: turn.contextPercent,
+    summary: `Recorded turn ${turn.turnIndex}`,
+  };
+}
+
+function buildScopeSummary(
+  scope: AnalyticsScopeSummary["scope"],
+  totals: AnalyticsTotalsRow,
+): AnalyticsScopeSummary {
+  return {
+    scope,
+    tokensSavedApprox: totals.tokensSavedApprox,
+    tokensKeptOutApprox: totals.tokensKeptOutApprox,
+    turnCount: totals.totalTurns,
   };
 }
 
@@ -144,13 +187,86 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     LIMIT ?
   `);
 
-  const selectTotals = db.prepare(`
+  const selectSessionTotals = db.prepare<unknown[], AnalyticsTotalsRow>(`
     SELECT
       COUNT(*) AS totalTurns,
       COALESCE(SUM(tokens_saved_approx), 0) AS tokensSavedApprox,
       COALESCE(SUM(tokens_kept_out_approx), 0) AS tokensKeptOutApprox
     FROM turn_metrics
     WHERE session_id = ?
+  `);
+
+  const selectProjectTotals = db.prepare<unknown[], AnalyticsTotalsRow>(`
+    SELECT
+      COUNT(*) AS totalTurns,
+      COALESCE(SUM(tokens_saved_approx), 0) AS tokensSavedApprox,
+      COALESCE(SUM(tokens_kept_out_approx), 0) AS tokensKeptOutApprox
+    FROM turn_metrics
+    WHERE project_path = ?
+  `);
+
+  const selectLifetimeTotals = db.prepare<unknown[], AnalyticsTotalsRow>(`
+    SELECT
+      COUNT(*) AS totalTurns,
+      COALESCE(SUM(tokens_saved_approx), 0) AS tokensSavedApprox,
+      COALESCE(SUM(tokens_kept_out_approx), 0) AS tokensKeptOutApprox
+    FROM turn_metrics
+  `);
+
+  const selectLatestSessionRow = db.prepare<unknown[], AnalyticsRow>(`
+    SELECT
+      session_id,
+      project_path,
+      turn_index,
+      tool_count,
+      message_count_after_turn,
+      timestamp,
+      context_tokens,
+      context_percent,
+      context_window,
+      tokens_saved_approx,
+      tokens_kept_out_approx
+    FROM turn_metrics
+    WHERE session_id = ?
+    ORDER BY timestamp DESC, id DESC
+    LIMIT 1
+  `);
+
+  const selectLatestProjectRow = db.prepare<unknown[], AnalyticsRow>(`
+    SELECT
+      session_id,
+      project_path,
+      turn_index,
+      tool_count,
+      message_count_after_turn,
+      timestamp,
+      context_tokens,
+      context_percent,
+      context_window,
+      tokens_saved_approx,
+      tokens_kept_out_approx
+    FROM turn_metrics
+    WHERE project_path = ?
+    ORDER BY timestamp DESC, id DESC
+    LIMIT 1
+  `);
+
+  const selectLatestLifetimeRow = db.prepare<unknown[], AnalyticsRow>(`
+    SELECT
+      session_id,
+      project_path,
+      turn_index,
+      tool_count,
+      message_count_after_turn,
+      timestamp,
+      context_tokens,
+      context_percent,
+      context_window,
+      tokens_saved_approx,
+      tokens_kept_out_approx
+    FROM turn_metrics
+    ORDER BY timestamp DESC, id DESC
+    LIMIT 1
   `);
 
   function pruneExpiredRows(retentionDays?: number): void {
@@ -166,13 +282,81 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     return selectRows.all(sessionId, limit) as AnalyticsRow[];
   }
 
-  function readSnapshot(sessionId: string, limit = 50): AnalyticsSnapshot {
-    const rows = getRows(sessionId, limit);
-    const totals = selectTotals.get(sessionId) as {
-      totalTurns: number;
-      tokensSavedApprox: number;
-      tokensKeptOutApprox: number;
+  function getTotals(
+    scope: "session" | "project" | "lifetime",
+    value?: string,
+  ): AnalyticsTotalsRow {
+    if (scope === "session") {
+      return (selectSessionTotals.get(value) as AnalyticsTotalsRow | undefined) ?? {
+        totalTurns: 0,
+        ...emptyTotals(),
+      };
+    }
+
+    if (scope === "project" && typeof value === "string") {
+      return (selectProjectTotals.get(value) as AnalyticsTotalsRow | undefined) ?? {
+        totalTurns: 0,
+        ...emptyTotals(),
+      };
+    }
+
+    return (selectLifetimeTotals.get() as AnalyticsTotalsRow | undefined) ?? {
+      totalTurns: 0,
+      ...emptyTotals(),
     };
+  }
+
+  function getLatestTurn(
+    scope: "session" | "project" | "lifetime",
+    value?: string,
+  ): AnalyticsTurnRecord | null {
+    const row =
+      scope === "session"
+        ? (selectLatestSessionRow.get(value) as AnalyticsRow | undefined)
+        : scope === "project" && typeof value === "string"
+          ? (selectLatestProjectRow.get(value) as AnalyticsRow | undefined)
+          : (selectLatestLifetimeRow.get() as AnalyticsRow | undefined);
+
+    return row ? toTurnRecord(row) : null;
+  }
+
+  function readDashboardSnapshot(
+    sessionId: string,
+    projectPath: string | null,
+    limit = 50,
+  ): DashboardSnapshot {
+    const rows = getRows(sessionId, limit);
+    const snapshot = buildSnapshot(rows, sessionId);
+    const sessionLatestTurn = snapshot.latestTurn;
+    const effectiveProjectPath = sessionLatestTurn?.projectPath ?? projectPath ?? null;
+
+    const sessionTotals = getTotals("session", sessionId);
+    const projectTotals =
+      typeof effectiveProjectPath === "string"
+        ? getTotals("project", effectiveProjectPath)
+        : { totalTurns: 0, ...emptyTotals() };
+    const lifetimeTotals = getTotals("lifetime");
+
+    const scopes = {
+      session: buildScopeSummary("session", sessionTotals),
+      project: buildScopeSummary("project", projectTotals),
+      lifetime: buildScopeSummary("lifetime", lifetimeTotals),
+    };
+
+    return {
+      generatedAt: snapshot.generatedAt,
+      sessionId,
+      projectPath: effectiveProjectPath,
+      context: snapshot.context,
+      scopes,
+      strategyTotals: {},
+      recentImpactEvents: snapshot.recentTurns.map(buildImpactEvent),
+    };
+  }
+
+  function readLegacySnapshot(sessionId: string, limit = 50): LegacyAnalyticsSnapshot {
+    const rows = getRows(sessionId, limit);
+    const totals = getTotals("session", sessionId);
     const snapshot = buildSnapshot(rows, sessionId);
 
     return {
@@ -186,13 +370,16 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
   }
 
   return {
-    recordTurn(turn: AnalyticsTurnRecord): AnalyticsSnapshot {
+    recordTurn(turn: AnalyticsTurnRecord): DashboardSnapshot {
       insertTurn.run(turn);
       pruneExpiredRows(options.retentionDays);
-      return readSnapshot(turn.sessionId);
+      return readDashboardSnapshot(turn.sessionId, turn.projectPath);
     },
-    getSnapshot(sessionId: string, limit = 50): AnalyticsSnapshot {
-      return readSnapshot(sessionId, limit);
+    getDashboardSnapshot(sessionId: string, projectPath: string, limit = 50): DashboardSnapshot {
+      return readDashboardSnapshot(sessionId, projectPath, limit);
+    },
+    getSnapshot(sessionId: string, limit = 50): LegacyAnalyticsSnapshot {
+      return readLegacySnapshot(sessionId, limit);
     },
     close(): void {
       db.close();
