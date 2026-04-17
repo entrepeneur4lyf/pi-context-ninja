@@ -73,6 +73,35 @@ export function renderDashboardPage(): string {
       line-height: 1.5;
     }
 
+    .meta-strip {
+      display: grid;
+      gap: 0.75rem;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      margin: 1rem 0 1.25rem;
+    }
+
+    .meta-chip {
+      border: 1px solid var(--border);
+      background: rgba(8, 18, 32, 0.62);
+      border-radius: 14px;
+      padding: 0.8rem 0.95rem;
+      min-width: 0;
+    }
+
+    .meta-label {
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 0.35rem;
+    }
+
+    .meta-value {
+      font-size: 0.98rem;
+      font-weight: 600;
+      word-break: break-word;
+    }
+
     .summary-band {
       display: grid;
       gap: 1rem;
@@ -160,6 +189,33 @@ export function renderDashboardPage(): string {
       max-height: 340px;
       overflow-y: auto;
       padding-right: 0.2rem;
+    }
+
+    .impact-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.92rem;
+    }
+
+    .impact-table th,
+    .impact-table td {
+      padding: 0.72rem 0.45rem;
+      text-align: left;
+      border-bottom: 1px solid rgba(122, 162, 203, 0.12);
+      vertical-align: top;
+    }
+
+    .impact-table th {
+      color: var(--muted);
+      font-size: 0.78rem;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      font-weight: 700;
+    }
+
+    .impact-table td {
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
     }
 
     .metric {
@@ -273,24 +329,39 @@ export function renderDashboardPage(): string {
 
     <section class="summary-band" aria-label="Summary Band">
       <article class="card">
-        <div class="card-label">Session</div>
-        <div id="session-id" class="card-value">--</div>
-      </article>
-      <article class="card">
-        <div class="card-label">Project Path</div>
-        <div id="project-path" class="card-value subtle">--</div>
-      </article>
-      <article class="card">
-        <div class="card-label">Context Load</div>
+        <div class="card-label">Current Context</div>
         <div id="ctx-pct" class="card-value">--%</div>
       </article>
       <article class="card">
-        <div class="card-label">Tokens Kept Out</div>
-        <div id="kept-out" class="card-value">--</div>
+        <div class="card-label">Context Tokens / Window</div>
+        <div id="ctx-window" class="card-value subtle">-- / --</div>
       </article>
       <article class="card">
-        <div class="card-label">Session Turns</div>
-        <div id="turns" class="card-value">--</div>
+        <div class="card-label">Session Saved</div>
+        <div id="session-saved" class="card-value">--</div>
+      </article>
+      <article class="card">
+        <div class="card-label">Project Saved</div>
+        <div id="project-saved" class="card-value">--</div>
+      </article>
+      <article class="card">
+        <div class="card-label">Lifetime Saved</div>
+        <div id="lifetime-saved" class="card-value">--</div>
+      </article>
+      <article class="card">
+        <div class="card-label">Recent Impacts</div>
+        <div id="impact-count" class="card-value">--</div>
+      </article>
+    </section>
+
+    <section class="meta-strip" aria-label="Session Metadata">
+      <article class="meta-chip">
+        <div class="meta-label">Session</div>
+        <div id="session-id" class="meta-value">--</div>
+      </article>
+      <article class="meta-chip">
+        <div class="meta-label">Project Path</div>
+        <div id="project-path" class="meta-value">--</div>
       </article>
     </section>
 
@@ -327,8 +398,11 @@ export function renderDashboardPage(): string {
     const sessionIdEl = document.getElementById('session-id');
     const projectPathEl = document.getElementById('project-path');
     const contextPctEl = document.getElementById('ctx-pct');
-    const keptOutEl = document.getElementById('kept-out');
-    const turnsEl = document.getElementById('turns');
+    const contextWindowEl = document.getElementById('ctx-window');
+    const sessionSavedEl = document.getElementById('session-saved');
+    const projectSavedEl = document.getElementById('project-saved');
+    const lifetimeSavedEl = document.getElementById('lifetime-saved');
+    const impactCountEl = document.getElementById('impact-count');
     const scopeChartEl = document.getElementById('scope-chart');
     const strategyChartEl = document.getElementById('strategy-chart');
     const impactLedgerEl = document.getElementById('impact-ledger');
@@ -337,6 +411,7 @@ export function renderDashboardPage(): string {
     let currentSessionId = new URLSearchParams(window.location.search).get('sessionId');
     let source;
     let liveFeedEntries = [];
+    let latestHistoryImpactKey = null;
 
     function formatNumber(value) {
       return typeof value === 'number' && Number.isFinite(value) ? value.toLocaleString() : '--';
@@ -347,8 +422,7 @@ export function renderDashboardPage(): string {
         return '--%';
       }
 
-      const normalized = value <= 1 ? value * 100 : value;
-      return normalized.toFixed(1) + '%';
+      return (value * 100).toFixed(1) + '%';
     }
 
     function escapeHtml(value) {
@@ -360,10 +434,23 @@ export function renderDashboardPage(): string {
         .replaceAll("'", '&#39;');
     }
 
-    function resolveSessionScope(snapshot) {
-      return snapshot?.scopes?.session ?? {
-        tokensKeptOutApprox: snapshot?.totals?.tokensKeptOutApprox ?? null,
-        turnCount: snapshot?.totalTurns ?? null,
+    function resolveScope(snapshot, scopeName) {
+      if (snapshot?.scopes?.[scopeName]) {
+        return snapshot.scopes[scopeName];
+      }
+
+      if (scopeName === 'session') {
+        return {
+          tokensSavedApprox: snapshot?.totals?.tokensSavedApprox ?? null,
+          tokensKeptOutApprox: snapshot?.totals?.tokensKeptOutApprox ?? null,
+          turnCount: snapshot?.totalTurns ?? null,
+        };
+      }
+
+      return {
+        tokensSavedApprox: null,
+        tokensKeptOutApprox: null,
+        turnCount: null,
       };
     }
 
@@ -383,6 +470,37 @@ export function renderDashboardPage(): string {
       return Math.max(8, Math.round((value / maxValue) * 100)) + '%';
     }
 
+    function formatTimestamp(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return '--';
+      }
+
+      return new Date(value).toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+      });
+    }
+
+    function getImpactEventKey(entry) {
+      if (entry == null || typeof entry !== 'object') {
+        return null;
+      }
+
+      return [
+        entry.timestamp,
+        entry.sessionId,
+        entry.projectPath,
+        entry.source,
+        entry.toolName ?? '',
+        entry.strategy,
+        entry.tokensSavedApprox,
+        entry.tokensKeptOutApprox,
+        entry.contextPercent ?? '',
+        entry.summary,
+      ].join('\u0000');
+    }
+
     function buildSnapshotUrl() {
       if (typeof currentSessionId !== 'string' || currentSessionId.length === 0) {
         return '/snapshot';
@@ -400,11 +518,17 @@ export function renderDashboardPage(): string {
     }
 
     function buildEventUrl() {
-      if (typeof currentSessionId !== 'string' || currentSessionId.length === 0) {
-        return '/events';
+      const params = new URLSearchParams();
+
+      if (typeof currentSessionId === 'string' && currentSessionId.length > 0) {
+        params.set('sessionId', currentSessionId);
+      }
+      if (typeof latestHistoryImpactKey === 'string') {
+        params.set('after', latestHistoryImpactKey);
       }
 
-      return '/events?sessionId=' + encodeURIComponent(currentSessionId);
+      const query = params.toString();
+      return query.length > 0 ? '/events?' + query : '/events';
     }
 
     function bindToSession(sessionId, reconnect) {
@@ -418,6 +542,9 @@ export function renderDashboardPage(): string {
       const nextSearch = params.toString();
       const nextUrl = window.location.pathname + (nextSearch.length > 0 ? '?' + nextSearch : '');
       window.history.replaceState(null, '', nextUrl);
+      latestHistoryImpactKey = null;
+      liveFeedEntries = [];
+      renderLiveFeed();
 
       if (reconnect) {
         source?.close();
@@ -429,22 +556,33 @@ export function renderDashboardPage(): string {
       sessionIdEl.textContent = '--';
       projectPathEl.textContent = '--';
       contextPctEl.textContent = '--%';
-      keptOutEl.textContent = '--';
-      turnsEl.textContent = '--';
+      contextWindowEl.textContent = '-- / --';
+      sessionSavedEl.textContent = '--';
+      projectSavedEl.textContent = '--';
+      lifetimeSavedEl.textContent = '--';
+      impactCountEl.textContent = '--';
     }
 
     function applySnapshotStats(snapshot) {
       if (snapshot == null) {
         resetSnapshotStats();
+        latestHistoryImpactKey = null;
+        liveFeedEntries = [];
+        renderLiveFeed();
         return;
       }
 
-      const sessionScope = resolveSessionScope(snapshot);
+      const sessionScope = resolveScope(snapshot, 'session');
+      const projectScope = resolveScope(snapshot, 'project');
+      const lifetimeScope = resolveScope(snapshot, 'lifetime');
       sessionIdEl.textContent = typeof snapshot.sessionId === 'string' && snapshot.sessionId.length > 0 ? snapshot.sessionId : '--';
       projectPathEl.textContent = typeof snapshot.projectPath === 'string' && snapshot.projectPath.length > 0 ? snapshot.projectPath : '--';
       contextPctEl.textContent = formatPercent(snapshot.context?.percent);
-      keptOutEl.textContent = formatNumber(sessionScope?.tokensKeptOutApprox);
-      turnsEl.textContent = formatNumber(sessionScope?.turnCount);
+      contextWindowEl.textContent = formatNumber(snapshot.context?.tokens) + ' / ' + formatNumber(snapshot.context?.window);
+      sessionSavedEl.textContent = formatNumber(sessionScope?.tokensSavedApprox);
+      projectSavedEl.textContent = formatNumber(projectScope?.tokensSavedApprox);
+      lifetimeSavedEl.textContent = formatNumber(lifetimeScope?.tokensSavedApprox);
+      impactCountEl.textContent = formatNumber(Array.isArray(snapshot?.recentImpactEvents) ? snapshot.recentImpactEvents.length : 0);
     }
 
     function renderScopeChart(snapshot) {
@@ -464,8 +602,18 @@ export function renderDashboardPage(): string {
             : 0,
         ),
       );
+      const maxKeptOut = Math.max(
+        0,
+        ...scopeEntries.map((entry) =>
+          typeof entry.data?.tokensKeptOutApprox === 'number' && Number.isFinite(entry.data.tokensKeptOutApprox)
+            ? entry.data.tokensKeptOutApprox
+            : 0,
+        ),
+      );
+      const primaryMetric = maxSaved > 0 ? 'saved' : 'kept out';
+      const primaryMax = primaryMetric === 'saved' ? maxSaved : maxKeptOut;
 
-      if (scopeEntries.length === 0 || maxSaved === 0) {
+      if (scopeEntries.length === 0 || primaryMax === 0) {
         scopeChartEl.innerHTML = 'No scope comparison yet.';
         scopeChartEl.className = 'chart-shell empty';
         return;
@@ -477,20 +625,23 @@ export function renderDashboardPage(): string {
           const saved = typeof data.tokensSavedApprox === 'number' ? data.tokensSavedApprox : 0;
           const keptOut = typeof data.tokensKeptOutApprox === 'number' ? data.tokensKeptOutApprox : 0;
           const turns = typeof data.turnCount === 'number' ? data.turnCount : 0;
+          const primaryValue = primaryMetric === 'saved' ? saved : keptOut;
+          const secondaryLabel = primaryMetric === 'saved' ? 'kept out' : 'saved';
+          const secondaryValue = primaryMetric === 'saved' ? keptOut : saved;
 
           return [
             '<div class="chart-row">',
             '  <div class="chart-topline">',
             '    <span class="chart-label">' + label + '</span>',
-            '    <span class="chart-value">' + formatNumber(saved) + ' saved</span>',
+            '    <span class="chart-value">' + formatNumber(primaryValue) + ' ' + primaryMetric + '</span>',
             '  </div>',
             '  <div class="chart-track"><div class="chart-fill ' +
               className +
               '" style="width: ' +
-              getChartWidth(saved, maxSaved) +
+              getChartWidth(primaryValue, primaryMax) +
               ';"></div></div>',
-            '  <div class="chart-detail">kept out ' +
-              formatNumber(keptOut) +
+            '  <div class="chart-detail">' + secondaryLabel + ' ' +
+              formatNumber(secondaryValue) +
               ' · ' +
               formatNumber(turns) +
               ' turn' +
@@ -574,12 +725,47 @@ export function renderDashboardPage(): string {
 
     function renderImpactLedger(events) {
       if (!Array.isArray(events) || events.length === 0) {
-        impactLedgerEl.textContent = 'No recent impact yet.';
+        latestHistoryImpactKey = null;
+        impactLedgerEl.innerHTML = 'No recent impact yet.';
         impactLedgerEl.className = 'stream empty';
         return;
       }
 
-      impactLedgerEl.textContent = events.map(formatImpactEntry).join('\\n');
+      latestHistoryImpactKey = getImpactEventKey(events[0]);
+      impactLedgerEl.innerHTML = [
+        '<table class="impact-table">',
+        '  <thead>',
+        '    <tr>',
+        '      <th>Time</th>',
+        '      <th>Source</th>',
+        '      <th>Tool</th>',
+        '      <th>Strategy</th>',
+        '      <th>Saved</th>',
+        '      <th>Kept Out</th>',
+        '      <th>Context</th>',
+        '    </tr>',
+        '  </thead>',
+        '  <tbody>',
+        events.map((entry) => {
+          const toolName = typeof entry?.toolName === 'string' && entry.toolName.length > 0 ? entry.toolName : '—';
+          const strategy = typeof entry?.strategy === 'string' && entry.strategy.length > 0 ? humanizeLabel(entry.strategy) : '—';
+          const sourceName = typeof entry?.source === 'string' && entry.source.length > 0 ? humanizeLabel(entry.source) : '—';
+
+          return [
+            '<tr>',
+            '  <td>' + escapeHtml(formatTimestamp(entry?.timestamp)) + '</td>',
+            '  <td>' + escapeHtml(sourceName) + '</td>',
+            '  <td>' + escapeHtml(toolName) + '</td>',
+            '  <td>' + escapeHtml(strategy) + '</td>',
+            '  <td>' + escapeHtml(formatNumber(entry?.tokensSavedApprox)) + '</td>',
+            '  <td>' + escapeHtml(formatNumber(entry?.tokensKeptOutApprox)) + '</td>',
+            '  <td>' + escapeHtml(formatPercent(entry?.contextPercent)) + '</td>',
+            '</tr>',
+          ].join('');
+        }).join(''),
+        '  </tbody>',
+        '</table>',
+      ].join('');
       impactLedgerEl.className = 'stream';
     }
 

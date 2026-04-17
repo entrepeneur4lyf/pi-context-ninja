@@ -57,6 +57,22 @@ function getImpactEventKey(event: DashboardImpactEvent): string {
   ].join("\u0000");
 }
 
+function getImpactEventsAfter(events: DashboardImpactEvent[], afterKey: string | null): DashboardImpactEvent[] {
+  if (events.length === 0) {
+    return [];
+  }
+  if (afterKey === null) {
+    return events;
+  }
+
+  const cutoffIndex = events.findIndex((event) => getImpactEventKey(event) === afterKey);
+  if (cutoffIndex === -1) {
+    return events;
+  }
+
+  return events.slice(0, cutoffIndex);
+}
+
 function normalizeOptions(
   optionsOrPort: DashboardServerOptions | number = 48900,
   host = "127.0.0.1",
@@ -190,6 +206,7 @@ export function startDashboardServer(
 
     if (requestUrl.pathname === "/events") {
       const sessionId = normalizeSessionId(requestUrl.searchParams.get("sessionId"));
+      const afterKey = requestUrl.searchParams.get("after");
       res.writeHead(200, {
         "Content-Type": "text/event-stream",
         "Cache-Control": "no-cache",
@@ -200,7 +217,7 @@ export function startDashboardServer(
       const snapshot = getSnapshot(sessionId ?? undefined);
       if (snapshot !== null) {
         writeSse(res, "snapshot", snapshot);
-        for (const event of getSnapshotHistory(snapshot)) {
+        for (const event of getImpactEventsAfter(getSnapshotHistory(snapshot), afterKey)) {
           writeSse(res, "impact", event);
         }
       }

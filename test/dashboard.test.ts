@@ -101,19 +101,46 @@ function createDashboardScriptHarness({ search = "" }: { search?: string } = {})
     throw new Error("expected inline dashboard script");
   }
 
-  const elements = new Map(
-    [
-      ["session-id", { textContent: "--" }],
-      ["ctx-pct", { textContent: "--%" }],
-      ["kept-out", { textContent: "--" }],
-      ["turns", { textContent: "--" }],
-      ["project-path", { textContent: "--" }],
-      ["impact-ledger", { textContent: "", innerHTML: "" }],
-      ["scope-chart", { textContent: "", innerHTML: "" }],
-      ["strategy-chart", { textContent: "", innerHTML: "" }],
-      ["live-feed", { textContent: "", innerHTML: "", scrollTop: 0, scrollHeight: 0 }],
-    ].map(([id, element]) => [id, element as { textContent: string; scrollTop?: number; scrollHeight?: number }]),
-  );
+  function makeElement(initialText = "") {
+    let text = initialText;
+    let html = "";
+
+    return {
+      scrollTop: 0,
+      scrollHeight: 0,
+      get textContent() {
+        return text;
+      },
+      set textContent(value: string) {
+        text = value;
+        html = value;
+      },
+      get innerHTML() {
+        return html;
+      },
+      set innerHTML(value: string) {
+        html = value;
+        text = value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+      },
+    };
+  }
+
+  const elementEntries: Array<[string, ReturnType<typeof makeElement>]> = [
+    ["session-id", makeElement("--")],
+    ["ctx-pct", makeElement("--%")],
+    ["ctx-window", makeElement("-- / --")],
+    ["session-saved", makeElement("--")],
+    ["project-saved", makeElement("--")],
+    ["lifetime-saved", makeElement("--")],
+    ["impact-count", makeElement("--")],
+    ["project-path", makeElement("--")],
+    ["impact-ledger", makeElement("")],
+    ["scope-chart", makeElement("")],
+    ["strategy-chart", makeElement("")],
+    ["live-feed", makeElement("")],
+  ];
+
+  const elements = new Map<string, ReturnType<typeof makeElement>>(elementEntries);
 
   const eventSources: Array<{
     url: string;
@@ -153,7 +180,7 @@ function createDashboardScriptHarness({ search = "" }: { search?: string } = {})
           json: async () => ({
             sessionId: "session-a",
             projectPath: "/tmp/project-a",
-            context: { percent: 0.375 },
+            context: { tokens: 420, percent: 0.375, window: 1000 },
             scopes: {
               session: {
                 tokensSavedApprox: 55,
@@ -645,9 +672,7 @@ describe("dashboard server", () => {
       expect(initial).not.toBeNull();
       expect(initial).toContain('"type":"connected"');
       expect(initial).toContain('"type":"snapshot"');
-      expect(initial).toContain('"type":"impact"');
       expect(initial?.indexOf('"type":"snapshot"')).toBeGreaterThan(initial?.indexOf('"type":"connected"') ?? -1);
-      expect(initial?.indexOf('"type":"impact"')).toBeGreaterThan(initial?.indexOf('"type":"snapshot"') ?? -1);
 
       server.publish("session-sse-impact", {
         generatedAt: 1713081700000,
@@ -712,6 +737,11 @@ describe("dashboard server", () => {
   it("renders scope and strategy chart panels in the control-tower shell", () => {
     const html = renderDashboardPage();
 
+    expect(html).toContain("Current Context");
+    expect(html).toContain('id="ctx-window"');
+    expect(html).toContain('id="session-saved"');
+    expect(html).toContain('id="project-saved"');
+    expect(html).toContain('id="lifetime-saved"');
     expect(html).toContain("Scope Comparison");
     expect(html).toContain('id="scope-chart"');
     expect(html).toContain("Strategy Payoff");
@@ -724,12 +754,24 @@ describe("dashboard server", () => {
     await page.flush();
 
     expect(page.getFetchUrls()).toEqual(["/snapshot?sessionId=session-a", "/history?sessionId=session-a"]);
-    expect(page.getEventSourceUrls()).toEqual(["/events?sessionId=session-a"]);
+    expect(page.getEventSourceUrls()).toHaveLength(1);
+    expect(page.getEventSourceUrls()[0]).toContain("/events?sessionId=session-a&after=");
     expect(page.getText("session-id")).toBe("session-a");
     expect(page.getText("project-path")).toBe("/tmp/project-a");
     expect(page.getText("ctx-pct")).toBe("37.5%");
-    expect(page.getText("impact-ledger")).toContain("Short-circuited repeated read output.");
-    expect(page.getText("impact-ledger")).toContain("ctx 37.5%");
+    expect(page.getText("ctx-window")).toBe("420 / 1,000");
+    expect(page.getText("session-saved")).toBe("55");
+    expect(page.getText("project-saved")).toBe("120");
+    expect(page.getText("lifetime-saved")).toBe("220");
+    expect(page.getText("impact-count")).toBe("0");
+    expect(page.getHtml("impact-ledger")).toContain('<table class="impact-table">');
+    expect(page.getText("impact-ledger")).toContain("Time");
+    expect(page.getText("impact-ledger")).toContain("Source");
+    expect(page.getText("impact-ledger")).toContain("Strategy");
+    expect(page.getText("impact-ledger")).toContain("read");
+    expect(page.getText("impact-ledger")).toContain("Short Circuit");
+    expect(page.getText("impact-ledger")).toContain("37.5%");
+    expect(page.getText("live-feed")).toBe("Waiting for live updates.");
   });
 
   it("renders scope and strategy charts from the dashboard snapshot", async () => {
@@ -774,6 +816,28 @@ describe("dashboard server", () => {
     expect(page.getHtml("scope-chart")).not.toContain("No scope comparison yet.");
   });
 
+  it("falls back to kept-out scope totals when savings stay at zero", async () => {
+    const page = createDashboardScriptHarness();
+
+    await page.flush();
+    page.dispatchSnapshot({
+      sessionId: "session-c",
+      projectPath: "/tmp/project-c",
+      context: { percent: 0.25, tokens: 250, window: 1000 },
+      scopes: {
+        session: { tokensSavedApprox: 0, tokensKeptOutApprox: 18, turnCount: 2 },
+        project: { tokensSavedApprox: 0, tokensKeptOutApprox: 40, turnCount: 5 },
+        lifetime: { tokensSavedApprox: 0, tokensKeptOutApprox: 70, turnCount: 9 },
+      },
+      strategyTotals: {},
+    });
+
+    expect(page.getHtml("scope-chart")).toContain("18 kept out");
+    expect(page.getHtml("scope-chart")).toContain("40 kept out");
+    expect(page.getHtml("scope-chart")).toContain("70 kept out");
+    expect(page.getHtml("scope-chart")).not.toContain("No scope comparison yet.");
+  });
+
   it("locks an initially unscoped page to the bootstrap snapshot before opening SSE", async () => {
     const page = createDashboardScriptHarness();
 
@@ -781,7 +845,8 @@ describe("dashboard server", () => {
 
     expect(page.getReplaceStateUrls()).toEqual(["/?sessionId=session-a"]);
     expect(page.getFetchUrls()).toEqual(["/snapshot", "/history?sessionId=session-a"]);
-    expect(page.getEventSourceUrls()).toEqual(["/events?sessionId=session-a"]);
+    expect(page.getEventSourceUrls()).toHaveLength(1);
+    expect(page.getEventSourceUrls()[0]).toContain("/events?sessionId=session-a&after=");
   });
 
   it("resets stale dashboard stat fields when the next snapshot omits them", async () => {
@@ -803,8 +868,11 @@ describe("dashboard server", () => {
     expect(page.getText("session-id")).toBe("session-a");
     expect(page.getText("project-path")).toBe("/tmp/project-a");
     expect(page.getText("ctx-pct")).toBe("42.0%");
-    expect(page.getText("kept-out")).toBe("144");
-    expect(page.getText("turns")).toBe("3");
+    expect(page.getText("ctx-window")).toBe("-- / --");
+    expect(page.getText("session-saved")).toBe("55");
+    expect(page.getText("project-saved")).toBe("120");
+    expect(page.getText("lifetime-saved")).toBe("220");
+    expect(page.getText("impact-count")).toBe("0");
     expect(page.getText("impact-ledger")).toBe("No recent impact yet.");
     expect(page.getHtml("scope-chart")).toContain("Session");
     expect(page.getHtml("strategy-chart")).toContain("Short Circuit");
@@ -814,9 +882,13 @@ describe("dashboard server", () => {
     expect(page.getText("session-id")).toBe("--");
     expect(page.getText("project-path")).toBe("--");
     expect(page.getText("ctx-pct")).toBe("--%");
-    expect(page.getText("kept-out")).toBe("--");
-    expect(page.getText("turns")).toBe("--");
+    expect(page.getText("ctx-window")).toBe("-- / --");
+    expect(page.getText("session-saved")).toBe("--");
+    expect(page.getText("project-saved")).toBe("--");
+    expect(page.getText("lifetime-saved")).toBe("--");
+    expect(page.getText("impact-count")).toBe("--");
     expect(page.getText("impact-ledger")).toBe("No recent impact yet.");
+    expect(page.getText("live-feed")).toBe("Waiting for live updates.");
     expect(page.getHtml("scope-chart")).toContain("No scope comparison yet.");
     expect(page.getHtml("strategy-chart")).toContain("No strategy payoff yet.");
   });
