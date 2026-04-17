@@ -191,6 +191,12 @@ export function renderDashboardPage(): string {
       padding-right: 0.2rem;
     }
 
+    .stream.ledger-scroll {
+      max-height: 420px;
+      overflow-y: auto;
+      padding-right: 0.2rem;
+    }
+
     .impact-table {
       width: 100%;
       border-collapse: collapse;
@@ -462,6 +468,62 @@ export function renderDashboardPage(): string {
         .join(' ');
     }
 
+    function humanizeToolName(value) {
+      return String(value).replaceAll('_', ' ').trim();
+    }
+
+    function formatCompactNumber(value) {
+      if (typeof value !== 'number' || !Number.isFinite(value)) {
+        return '--';
+      }
+
+      const absValue = Math.abs(value);
+      if (absValue >= 1000000) {
+        return (value / 1000000).toFixed(absValue >= 10000000 ? 0 : 1).replace(/\.0$/, '') + 'm';
+      }
+      if (absValue >= 1000) {
+        return (value / 1000).toFixed(absValue >= 100000 ? 0 : 1).replace(/\.0$/, '') + 'k';
+      }
+
+      return Math.round(value).toString();
+    }
+
+    function describeImpactSource(value) {
+      if (value === 'runtime.materialize') {
+        return 'Context Update';
+      }
+
+      return humanizeLabel(value);
+    }
+
+    function describeImpactStrategy(value) {
+      if (value === 'background_index') {
+        return 'Older Output';
+      }
+
+      return humanizeLabel(value);
+    }
+
+    function buildReadableImpactSummary(entry) {
+      if (entry == null || typeof entry !== 'object') {
+        return 'Context impact recorded.';
+      }
+
+      const toolName = typeof entry.toolName === 'string' && entry.toolName.length > 0
+        ? humanizeToolName(entry.toolName)
+        : 'tool';
+
+      if (entry.strategy === 'background_index') {
+        return 'Indexed older ' + toolName + ' output';
+      }
+
+      if (typeof entry.summary === 'string' && entry.summary.length > 0) {
+        return entry.summary;
+      }
+
+      return describeImpactStrategy(entry.strategy || 'impact') + ' on ' + toolName;
+    }
+
     function getChartWidth(value, maxValue) {
       if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0 || maxValue <= 0) {
         return '0%';
@@ -699,20 +761,14 @@ export function renderDashboardPage(): string {
         return 'Unknown impact event';
       }
 
-      const summary = typeof entry.summary === 'string' && entry.summary.length > 0 ? entry.summary : 'Context impact recorded.';
+      const summary = buildReadableImpactSummary(entry);
       const details = [];
 
-      if (typeof entry.toolName === 'string' && entry.toolName.length > 0) {
-        details.push(entry.toolName);
+      if (typeof entry.tokensSavedApprox === 'number' && Number.isFinite(entry.tokensSavedApprox) && entry.tokensSavedApprox > 0) {
+        details.push(formatCompactNumber(entry.tokensSavedApprox) + ' saved');
       }
-      if (typeof entry.strategy === 'string' && entry.strategy.length > 0) {
-        details.push(entry.strategy);
-      }
-      if (typeof entry.tokensSavedApprox === 'number' && Number.isFinite(entry.tokensSavedApprox)) {
-        details.push('saved ' + entry.tokensSavedApprox.toLocaleString());
-      }
-      if (typeof entry.tokensKeptOutApprox === 'number' && Number.isFinite(entry.tokensKeptOutApprox)) {
-        details.push('kept ' + entry.tokensKeptOutApprox.toLocaleString());
+      if (typeof entry.tokensKeptOutApprox === 'number' && Number.isFinite(entry.tokensKeptOutApprox) && entry.tokensKeptOutApprox > 0) {
+        details.push(formatCompactNumber(entry.tokensKeptOutApprox) + ' kept out of context');
       }
 
       const contextPercent = entry.contextPercent ?? entry.context?.percent ?? null;
@@ -747,9 +803,9 @@ export function renderDashboardPage(): string {
         '  </thead>',
         '  <tbody>',
         events.map((entry) => {
-          const toolName = typeof entry?.toolName === 'string' && entry.toolName.length > 0 ? entry.toolName : '—';
-          const strategy = typeof entry?.strategy === 'string' && entry.strategy.length > 0 ? humanizeLabel(entry.strategy) : '—';
-          const sourceName = typeof entry?.source === 'string' && entry.source.length > 0 ? humanizeLabel(entry.source) : '—';
+          const toolName = typeof entry?.toolName === 'string' && entry.toolName.length > 0 ? humanizeToolName(entry.toolName) : '—';
+          const strategy = typeof entry?.strategy === 'string' && entry.strategy.length > 0 ? describeImpactStrategy(entry.strategy) : '—';
+          const sourceName = typeof entry?.source === 'string' && entry.source.length > 0 ? describeImpactSource(entry.source) : '—';
 
           return [
             '<tr>',
@@ -766,7 +822,7 @@ export function renderDashboardPage(): string {
         '  </tbody>',
         '</table>',
       ].join('');
-      impactLedgerEl.className = 'stream';
+      impactLedgerEl.className = 'stream ledger-scroll';
     }
 
     function renderLiveFeed() {

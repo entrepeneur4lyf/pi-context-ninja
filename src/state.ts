@@ -63,14 +63,12 @@ export function creditSavings(
   tokensSaved: number,
   tokensKeptOut: number,
 ): boolean {
-  state.tokensKeptOutTotal += tokensKeptOut;
-  state.tokensKeptOutByType[strategy] = (state.tokensKeptOutByType[strategy] ?? 0) + tokensKeptOut;
-
-  // Gating: only credit saved tokens once per toolCallId+strategy combination
   const key = `${toolCallId}:${strategy}`;
   if (state.countedSavingsIds.has(key)) return false;
   state.countedSavingsIds.add(key);
 
+  state.tokensKeptOutTotal += tokensKeptOut;
+  state.tokensKeptOutByType[strategy] = (state.tokensKeptOutByType[strategy] ?? 0) + tokensKeptOut;
   state.tokensSaved += tokensSaved;
   state.tokensSavedByType[strategy] = (state.tokensSavedByType[strategy] ?? 0) + tokensSaved;
 

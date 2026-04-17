@@ -104,10 +104,17 @@ function createDashboardScriptHarness({ search = "" }: { search?: string } = {})
   function makeElement(initialText = "") {
     let text = initialText;
     let html = "";
+    let className = "";
 
     return {
       scrollTop: 0,
       scrollHeight: 0,
+      get className() {
+        return className;
+      },
+      set className(value: string) {
+        className = value;
+      },
       get textContent() {
         return text;
       },
@@ -292,6 +299,13 @@ function createDashboardScriptHarness({ search = "" }: { search?: string } = {})
         throw new Error(`missing test element: ${id}`);
       }
       return element.innerHTML ?? "";
+    },
+    getClassName(id: string) {
+      const element = elements.get(id) as { className?: string } | undefined;
+      if (!element) {
+        throw new Error(`missing test element: ${id}`);
+      }
+      return element.className ?? "";
     },
     getFetchUrls() {
       return fetchUrls;
@@ -910,6 +924,30 @@ describe("dashboard server", () => {
     expect(page.getText("live-feed")).toContain("Short-circuited repeated grep output.");
     expect(page.getText("live-feed")).toContain("ctx 40.0%");
     expect(page.getText("live-feed")).not.toContain("\"strategy\"");
+
+    page.dispatchImpact({
+      timestamp: 1713081705000,
+      toolName: "hashline_read",
+      strategy: "background_index",
+      tokensSavedApprox: 0,
+      tokensKeptOutApprox: 97805,
+      contextPercent: 0.23,
+      summary: "background_index on hashline_read saved 0 token(s) and kept 97805 token(s) out of context",
+    });
+
+    expect(page.getText("live-feed")).toContain("Indexed older hashline read output");
+    expect(page.getText("live-feed")).toContain("97.8k kept out of context");
+    expect(page.getText("live-feed")).not.toContain("background_index on");
+    expect(page.getText("live-feed")).not.toContain("token(s)");
+  });
+
+  it("renders the impact ledger inside a bounded scroll container", async () => {
+    const page = createDashboardScriptHarness({ search: "?sessionId=session-a" });
+
+    await page.flush();
+
+    expect(page.getHtml("impact-ledger")).toContain('<table class="impact-table">');
+    expect(page.getClassName("impact-ledger")).toContain("ledger-scroll");
   });
 });
 

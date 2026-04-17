@@ -1260,7 +1260,7 @@ describe("runtime hook registration", () => {
     expect(readIndexEntries(getIndexPath("/tmp/project"))).toHaveLength(1);
   });
 
-  it("counts repeated prune-target omissions in kept-out metrics while gating saved credit", async () => {
+  it("credits prune-target omissions only once in kept-out metrics", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;
     config.dashboard.enabled = false;
@@ -1355,7 +1355,7 @@ describe("runtime hook registration", () => {
     const keptOut = persisted?.tokensKeptOutByType.background_index ?? 0;
 
     expect(saved).toBeGreaterThan(0);
-    expect(keptOut).toBe(saved * 2);
+    expect(keptOut).toBe(saved);
     expect(persisted?.tokensSaved).toBeGreaterThanOrEqual(saved);
     expect(persisted?.tokensKeptOutTotal).toBeGreaterThanOrEqual(keptOut);
     expect(persisted?.turnHistory.at(-1)).toMatchObject({
@@ -1365,7 +1365,7 @@ describe("runtime hook registration", () => {
     expect((persisted?.turnHistory.at(-1)?.tokensKeptOutDelta ?? 0)).toBeGreaterThanOrEqual(keptOut);
   });
 
-  it("counts repeated materialized omissions in kept-out metrics while gating saved credit", async () => {
+  it("credits repeated materialized omissions only once in kept-out metrics", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;
     config.dashboard.enabled = false;
@@ -1432,7 +1432,7 @@ describe("runtime hook registration", () => {
     const keptOut = persisted?.tokensKeptOutByType.dedup ?? 0;
 
     expect(saved).toBeGreaterThan(0);
-    expect(keptOut).toBe(saved * 2);
+    expect(keptOut).toBe(saved);
     expect(persisted?.turnHistory.at(-1)).toMatchObject({
       turnIndex: 1,
     });
