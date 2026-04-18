@@ -122,6 +122,8 @@ The compression pipeline applies six strategies in order to each tool result mes
 
 The analytics dashboard is optional observability. It shows the current session's exact Pi context percentage, approximate tokens kept out, turn count, and a live event log.
 
+Default dashboard URL:
+
 ```
 http://127.0.0.1:48900
 ```
@@ -199,6 +201,6 @@ pi-context-ninja/
 ## Verification
 
 ```bash
-rtk npm run check
-rtk npm test -- test/runtime-hooks.test.ts
+npm run check
+npm test -- test/runtime-hooks.test.ts
 ```
