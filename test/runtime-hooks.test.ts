@@ -736,6 +736,34 @@ describe("runtime hook registration", () => {
     expect(second).toBeUndefined();
   });
 
+  it("returns undefined systemPrompt when event.systemPrompt is not a string (regression for trimEnd crash)", async () => {
+    const config = defaultConfig();
+    config.analytics.enabled = false;
+    config.dashboard.enabled = false;
+    config.systemHint.enabled = true;
+    config.systemHint.frequency = "once_per_session";
+    config.systemHint.text = "Keep the context small.";
+
+    const { calls, pi } = createPiMock();
+    createExtensionRuntime(pi, config);
+
+    const handler = calls.get("before_agent_start");
+
+    for (const badPrompt of [undefined, null, 42, {}, []]) {
+      const sessionCtx = createContext(`session-non-string-${String(badPrompt)}`);
+      const result = await handler?.(
+        {
+          type: "before_agent_start",
+          prompt: "question",
+          images: undefined,
+          systemPrompt: badPrompt as any,
+        },
+        sessionCtx,
+      );
+      expect(result).toEqual({ systemPrompt: undefined });
+    }
+  });
+
   it("persists once-per-session system hint state across runtime reloads", async () => {
     const config = defaultConfig();
     config.analytics.enabled = false;

@@ -99,7 +99,10 @@ function backfillObservedTurnIndices(
   }
 }
 
-function appendSystemHint(systemPrompt: string, hintText: string): string {
+function appendSystemHint(systemPrompt: string, hintText: string): string | undefined {
+  if (typeof systemPrompt !== "string") {
+    return undefined;
+  }
   const trimmedSystemPrompt = systemPrompt.trimEnd();
   if (!trimmedSystemPrompt) {
     return hintText;

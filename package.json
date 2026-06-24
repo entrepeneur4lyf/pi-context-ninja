@@ -1,6 +1,6 @@
 {
   "name": "pi-context-ninja",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "type": "module",
   "description": "Silent-first context optimization extension for Pi",
   "keywords": [
