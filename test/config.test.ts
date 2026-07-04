@@ -30,6 +30,7 @@ describe("config", () => {
     expect(config.backgroundIndexing).toEqual({
       enabled: true,
       minRangeTurns: 8,
+      protectedTools: [],
     });
   });
 
@@ -128,6 +129,7 @@ describe("config", () => {
       expect(config.backgroundIndexing).toEqual({
         enabled: true,
         minRangeTurns: 4,
+        protectedTools: [],
       });
       expect("maxFiles" in config.backgroundIndexing).toBe(false);
       expect("debounceMs" in config.backgroundIndexing).toBe(false);

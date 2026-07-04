@@ -81,6 +81,12 @@ strategies:
 backgroundIndexing:
   enabled: true
   minRangeTurns: 8
+  # Tool results that are never indexed/pruned. Protect tools whose output
+  # cannot be re-fetched (subagent reports, job polls, peer messages).
+  protectedTools:
+    - task
+    - job
+    - irc
 
 # Token savings analytics stored in SQLite
 analytics:
@@ -116,7 +122,7 @@ The compression pipeline applies six strategies in order to each tool result mes
 3. **Truncation** — Head/tail truncation for oversized content, keeping relevant context at both ends.
 4. **Deduplication** — Fingerprint-based dedup that collapses repeated tool results beyond a configurable occurrence count.
 5. **Error Purge** — Replaces stale error outputs (older than N turns) with minimal tombstones.
-6. **View-Layer Pruning** — Applies omit-ranges from the background index to surgically remove unreferenced file content at the message level.
+6. **View-Layer Pruning** — Applies omit-ranges from the background index to surgically remove unreferenced file content at the message level. Tools listed in `backgroundIndexing.protectedTools` are never indexed or pruned — use this for results that cannot be re-fetched (subagent reports, job completions, peer messages).
 
 ## Dashboard
 

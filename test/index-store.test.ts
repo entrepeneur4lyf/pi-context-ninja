@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import fs from "fs";
 import path from "path";
 import os from "os";
+import type { AgentMessage } from "@mariozechner/pi-agent-core";
 
 import { appendIndexEntry, getIndexPath, readIndexEntries } from "../src/persistence/index-store";
 import { refreshRangeIndex } from "../src/runtime/index-manager";
@@ -285,6 +286,74 @@ describe("index-store", () => {
     expect(readIndexEntries(getIndexPath("/workspace/project-a"))[0]?.pruneTargets).toEqual([
       expect.objectContaining({
         toolCallId: "safe",
+      }),
+    ]);
+
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+    delete process.env.PCN_INDEX_DIR;
+  });
+  it("skips tool results whose toolName is protected from background indexing", () => {
+    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-index-manager-"));
+    process.env.PCN_INDEX_DIR = tmpDir;
+
+    const state = createSessionState("session-1");
+    state.currentTurn = 4;
+    state.toolCalls.set("replayable", {
+      toolCallId: "replayable",
+      toolName: "read",
+      inputArgs: { path: "a.ts" },
+      inputFingerprint: "{\"path\":\"a.ts\"}",
+      isError: false,
+      turnIndex: 0,
+      timestamp: 1,
+      tokenEstimate: 10,
+    });
+    state.toolCalls.set("non-replayable", {
+      toolCallId: "non-replayable",
+      toolName: "task",
+      inputArgs: { tasks: [] },
+      inputFingerprint: "{\"tasks\":[]}",
+      isError: false,
+      turnIndex: 0,
+      timestamp: 2,
+      tokenEstimate: 10,
+    });
+
+    const messages = [
+      {
+        role: "toolResult",
+        toolCallId: "replayable",
+        toolName: "read",
+        isError: false,
+        content: [{ type: "text", text: "file body" }],
+      },
+      {
+        role: "toolResult",
+        toolCallId: "non-replayable",
+        toolName: "task",
+        isError: false,
+        content: [{ type: "text", text: "subagent final report" }],
+      },
+      // Partial fixture shapes; the SDK message type is broader than the fields under test.
+    ] as unknown as AgentMessage[];
+
+    const config = defaultConfig();
+    config.backgroundIndexing.enabled = true;
+    config.backgroundIndexing.minRangeTurns = 1;
+    config.backgroundIndexing.protectedTools = ["task", "job", "irc"];
+
+    const pruneTargets = refreshRangeIndex(messages, state, config, "/workspace/project-a");
+
+    expect(pruneTargets).toEqual([
+      expect.objectContaining({
+        toolCallId: "replayable",
+      }),
+    ]);
+    expect(state.pruneTargets).toHaveLength(1);
+    expect(state.pruneTargets[0]?.toolCallId).toBe("replayable");
+    expect(readIndexEntries(getIndexPath("/workspace/project-a"))[0]?.pruneTargets).toEqual([
+      expect.objectContaining({
+        toolCallId: "replayable",
       }),
     ]);
 

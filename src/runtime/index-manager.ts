@@ -28,13 +28,15 @@ export function refreshRangeIndex(
     return [];
   }
 
+  const protectedTools = new Set(config.backgroundIndexing.protectedTools);
   const toolResults = messages.filter(isToolResultMessage).filter((message) => {
     const record = state.toolCalls.get(message.toolCallId);
     return (
       record !== undefined &&
+      !protectedTools.has(record.toolName) &&
       !record.awaitingAuthoritativeTurn &&
       !record.isError &&
-      !(message as any).isError &&
+      !("isError" in message && message.isError === true) &&
       canApplyPruneTarget(message) &&
       record.turnIndex >= stale.startTurn &&
       record.turnIndex <= stale.endTurn

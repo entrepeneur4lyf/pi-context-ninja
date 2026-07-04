@@ -36,6 +36,7 @@ export interface ErrorPurgeConfig {
 export interface BackgroundIndexingConfig {
   enabled: boolean;
   minRangeTurns: number;
+  protectedTools: string[];
 }
 
 export interface AnalyticsConfig {
@@ -111,6 +112,7 @@ export function defaultConfig(): PCNConfig {
     backgroundIndexing: {
       enabled: true,
       minRangeTurns: 8,
+      protectedTools: [],
     },
     analytics: {
       enabled: true,
