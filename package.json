@@ -24,7 +24,7 @@
     "@mariozechner/pi-agent-core": "0.67.2",
     "@mariozechner/pi-ai": "0.67.2",
     "@mariozechner/pi-coding-agent": "0.67.2",
-    "better-sqlite3": "^11.0.0",
+    "better-sqlite3": "^12.11.1",
     "yaml": "^2.7.0"
   },
   "devDependencies": {
