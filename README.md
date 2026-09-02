@@ -5,13 +5,15 @@ Silent-first context freshness extension for [oh-my-pi](https://omp.sh).
 PCN keeps the model's request context short and fresh. Repeated outputs,
 stale errors, and oversized results are rewritten before each request,
 and every kept-out token is credited to the strategy that removed it.
-The model sees a shorter, fresher context and at most one passive hint
-per session. It never sees a compression workflow.
+The model sees a shorter, fresher context and at most one passive hint,
+appended to the system prompt. It never sees a compression workflow.
 
 ## Install
 
+Targets oh-my-pi 18.1.2 or newer.
+
 ```bash
-omp install github:eas4ai/pi-context-ninja
+omp install https://github.com/eas4ai/pi-context-ninja
 ```
 
 oh-my-pi discovers the extension through the `omp.extensions` manifest in
@@ -38,8 +40,8 @@ PCN has two layers:
   Available whenever the extension is loaded, even when the data plane
   failed to start, so `/pcn doctor` can always say what is wrong.
 - **Data plane**: the hook runtime. It records tool provenance, shapes
-  tool results, credits kept-out tokens, records analytics, and serves
-  the dashboard.
+  tool results, credits kept-out tokens, records analytics, and draws
+  the dashboard surfaces.
 
 Project control state lives in marker files under `<project>/.omp/pcn/`:
 
@@ -125,8 +127,8 @@ stores that shaped result.
 
 Some results are never rewritten:
 
-- results of the `read` tool, because the next `edit` needs their line
-  anchors;
+- successful results of the `read` tool, because the next `edit` needs
+  their line anchors (a stale `read` error is still purged);
 - any result carrying a hashline header (`[path#hash]`);
 - results of the tools in `shaping.protectedTools`;
 - results the host has already pruned (`prunedAt` set).
@@ -149,8 +151,9 @@ PCN draws on two host surfaces and opens no network port.
 
 Figures are approximate (characters divided by four) until the host
 tokenizer lands. When the analytics store is unavailable, the overlay
-says so and shows the live session counters only. Headless, RPC, and ACP
-modes skip both surfaces. Disable the dashboard per project with
+says so and shows the live session counters only. When the host reports
+no interactive UI, PCN skips both surfaces. Disable the dashboard per
+project with
 `/pcn disable dashboard`, or globally with `dashboard.enabled: false`.
 
 ## Files
@@ -193,7 +196,6 @@ pi-context-ninja/
 │   ├── analytics/                # bun:sqlite store and types
 │   └── dashboard/                # Status-line item and overlay on the host UI
 ├── test/                         # bun:test, one file per module
-├── docs/                         # local working documents, not tracked
 └── package.json
 ```
 
