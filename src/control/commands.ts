@@ -1,4 +1,4 @@
-import type { ExtensionAPI, ExtensionCommandContext } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI, ExtensionCommandContext } from "@oh-my-pi/pi-coding-agent";
 import { resolveRuntimeConfigPath } from "../config.js";
 import { buildProjectDoctorReport } from "./doctor.js";
 import { exportProjectDoctorReport } from "./export.js";
@@ -12,7 +12,7 @@ import {
 } from "./project-state.js";
 import { buildProjectStatus } from "./status.js";
 
-const USAGE_MESSAGE = "Usage: /pcn status|doctor|export|enable|disable|enable dashboard|disable dashboard";
+const USAGE_MESSAGE = "Usage: /pcn status|doctor|export|dashboard|enable|disable|enable dashboard|disable dashboard";
 
 export interface CommandRuntimeHealthSnapshot {
   configPath: string;
@@ -24,9 +24,13 @@ export interface CommandRuntimeHealth extends CommandRuntimeHealthSnapshot {
   degradedReasonEntries: Map<string, string>;
 }
 
+/** Outcome of asking the runtime to open the overlay (DASH-030). */
+export type OpenDashboardResult = { opened: true } | { opened: false; reason: string };
+
 export interface CommandRuntimeActions {
   revokeDashboardSession?: (sessionId: string) => Promise<void> | void;
   revokeProjectDashboardSessions?: (projectPath: string) => Promise<void> | void;
+  openDashboard?: (ctx: ExtensionCommandContext) => Promise<OpenDashboardResult>;
 }
 
 export function createCommandRuntimeHealth(): CommandRuntimeHealth {
@@ -115,6 +119,33 @@ function buildStatusMessage(projectPath: string, runtimeHealth: CommandRuntimeHe
   return lines.join("\n");
 }
 
+/** `/pcn dashboard`: open the overlay, or say why it cannot open (CTRL-001, DASH-030). */
+async function openDashboardFromCommand(
+  projectPath: string,
+  ctx: ExtensionCommandContext,
+  runtimeHealth: CommandRuntimeHealthSnapshot,
+  runtimeActions?: CommandRuntimeActions,
+): Promise<void> {
+  const control = readProjectControlState(projectPath);
+  if (!control.enabled) {
+    ctx.ui.notify("Pi Context Ninja is disabled for this project. Run /pcn enable first.", "warning");
+    return;
+  }
+  if (!control.dashboardEnabled) {
+    ctx.ui.notify("The dashboard is disabled for this project. Run /pcn enable dashboard first.", "warning");
+    return;
+  }
+  if (!runtimeHealth.runtimeLoaded || !runtimeActions?.openDashboard) {
+    const reasons = runtimeHealth.degradedReasons.length > 0 ? ` (${runtimeHealth.degradedReasons.join(" | ")})` : "";
+    ctx.ui.notify(`The dashboard is not available${reasons}.`, "warning");
+    return;
+  }
+  const result = await runtimeActions.openDashboard(ctx);
+  if (!result.opened) {
+    ctx.ui.notify(`The dashboard is not available: ${result.reason}.`, "warning");
+  }
+}
+
 function buildDoctorMessage(projectPath: string, runtimeHealth: CommandRuntimeHealthSnapshot): string {
   const report = buildProjectDoctorReport({
     projectPath,
@@ -167,6 +198,11 @@ export function registerProjectControlCommands(
       if (action === "export" && target === undefined) {
         const reportPath = exportDoctorReport(projectPath, getRuntimeHealth());
         ctx.ui.notify(`Exported PCN report to ${reportPath}`, "info");
+        return;
+      }
+
+      if (action === "dashboard" && target === undefined) {
+        await openDashboardFromCommand(projectPath, ctx, getRuntimeHealth(), runtimeActions);
         return;
       }
 

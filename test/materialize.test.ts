@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import { defaultConfig } from "../src/config";
 import { createSessionState, getOrCreateToolRecord } from "../src/state";
 import { materializeContext } from "../src/strategies/materialize";
@@ -8,7 +8,6 @@ describe("materialize", () => {
     const state = createSessionState("/tmp");
     state.currentTurn = 2;
     const cfg = defaultConfig();
-    cfg.strategies.shortCircuit.minTokens = 4;
     state.toolCalls.set("t1", {
       toolCallId: "t1",
       toolName: "bash",
@@ -39,10 +38,10 @@ describe("materialize", () => {
     expect(toolMsg.content[0].text).toBe("[ok]");
   });
 
-  it("respects shortCircuit.minTokens during materialization", () => {
+  it("skips short circuit for results above shortCircuit.maxTokens", () => {
     const state = createSessionState("/tmp");
     const cfg = defaultConfig();
-    cfg.strategies.shortCircuit.minTokens = 9999;
+    cfg.strategies.shortCircuit.maxTokens = 1;
     state.toolCalls.set("t1", {
       toolCallId: "t1",
       toolName: "bash",
@@ -70,10 +69,9 @@ describe("materialize", () => {
     expect((result.messages as any)[0].content[0].text).toBe('{"status":"ok"}');
   });
 
-  it("still shapes protected tools but skips deduplication", () => {
+  it("never rewrites results of protected tools", () => {
     const state = createSessionState("/tmp");
     const cfg = defaultConfig();
-    cfg.strategies.shortCircuit.minTokens = 4;
     cfg.strategies.deduplication.maxOccurrences = 1;
     const msgs = [
       {
@@ -97,14 +95,62 @@ describe("materialize", () => {
     const result = materializeContext(msgs, { state, config: cfg });
 
     expect(result.messages?.length).toBe(2);
-    expect((result.messages as any)[0].content[0].text).toBe("[ok]");
-    expect((result.messages as any)[1].content[0].text).toBe("[ok]");
+    expect((result.messages as any)[0].content[0].text).toBe('{"status":"ok"}');
+    expect((result.messages as any)[1].content[0].text).toBe('{"status":"ok"}');
+    expect(state.tokensKeptOutTotal).toBe(0);
+  });
+
+  it("never rewrites a read result, even a repeated one", () => {
+    const state = createSessionState("/tmp");
+    const cfg = defaultConfig();
+    cfg.strategies.deduplication.maxOccurrences = 1;
+    const text = '{"status":"ok"}';
+    const msgs = [
+      { role: "toolResult", content: [{ type: "text", text }], toolName: "read", isError: false, toolCallId: "r1" },
+      { role: "toolResult", content: [{ type: "text", text }], toolName: "read", isError: false, toolCallId: "r2" },
+    ] as any;
+
+    const result = materializeContext(msgs, { state, config: cfg });
+
+    expect((result.messages as any)[0].content[0].text).toBe(text);
+    expect((result.messages as any)[1].content[0].text).toBe(text);
+  });
+
+  it("never rewrites a result that carries a hashline header", () => {
+    const state = createSessionState("/tmp");
+    const cfg = defaultConfig();
+    cfg.strategies.truncation.minLines = 5;
+    const text = ["[src/a.ts#ab12cd]", ...Array.from({ length: 20 }, (_, i) => `${i + 1}:line ${i + 1}`)].join("\n");
+    const msgs = [
+      { role: "toolResult", content: [{ type: "text", text }], toolName: "grep", isError: false, toolCallId: "g1" },
+    ] as any;
+
+    const result = materializeContext(msgs, { state, config: cfg });
+
+    expect((result.messages as any)[0].content[0].text).toBe(text);
+  });
+
+  it("leaves host-pruned results alone and does not count them as dedup occurrences", () => {
+    const state = createSessionState("/tmp");
+    const cfg = defaultConfig();
+    cfg.strategies.deduplication.maxOccurrences = 1;
+    cfg.strategies.shortCircuit.enabled = false;
+    const text = "[Superseded by a newer read of this file]";
+    const msgs = [
+      { role: "toolResult", content: [{ type: "text", text }], toolName: "grep", isError: false, toolCallId: "p1", prunedAt: 1 },
+      { role: "toolResult", content: [{ type: "text", text }], toolName: "grep", isError: false, toolCallId: "p2", prunedAt: 2 },
+      { role: "toolResult", content: [{ type: "text", text }], toolName: "grep", isError: false, toolCallId: "p3" },
+    ] as any;
+
+    const result = materializeContext(msgs, { state, config: cfg });
+
+    expect((result.messages as any).map((m: any) => m.content[0].text)).toEqual([text, text, text]);
+    expect(state.tokensKeptOutTotal).toBe(0);
   });
 
   it("preserves image blocks when rewriting tool results", () => {
     const state = createSessionState("/tmp");
     const cfg = defaultConfig();
-    cfg.strategies.shortCircuit.minTokens = 4;
     state.currentTurn = 2;
     state.toolCalls.set("t1", {
       toolCallId: "t1",
@@ -291,7 +337,7 @@ describe("materialize", () => {
         text: "[Error output removed -- tool failed more than 3 turns ago]",
       },
     ]);
-    expect(state.tokensSavedByType.error_purge ?? 0).toBeGreaterThan(0);
+    expect(state.tokensKeptOutByType.error_purge ?? 0).toBeGreaterThan(0);
     expect(state.tokensKeptOutByType.error_purge ?? 0).toBeGreaterThan(0);
   });
 
@@ -336,7 +382,7 @@ describe("materialize", () => {
     const toolMsg = result.messages?.[0] as any;
 
     expect(toolMsg.content).toEqual(msgs[0].content);
-    expect(state.tokensSavedByType.error_purge ?? 0).toBe(0);
+    expect(state.tokensKeptOutByType.error_purge ?? 0).toBe(0);
     expect(state.tokensKeptOutByType.error_purge ?? 0).toBe(0);
   });
 
@@ -403,7 +449,7 @@ describe("materialize", () => {
           { type: "image", data: "img-data", mimeType: "image/png" },
           { type: "text", text: "beta" },
         ],
-        toolName: "read",
+        toolName: "grep",
         isError: false,
         toolCallId: "t1",
         _key: "t1",
@@ -411,7 +457,7 @@ describe("materialize", () => {
       {
         role: "toolResult",
         content: [{ type: "text", text: "alpha\nbeta" }],
-        toolName: "read",
+        toolName: "grep",
         isError: false,
         toolCallId: "t2",
         _key: "t2",
@@ -421,8 +467,8 @@ describe("materialize", () => {
     const result = materializeContext(msgs, { state, config: cfg });
 
     expect(result.messages?.[0]).toEqual(msgs[0]);
-    expect((result.messages as any)[1].content[0].text).toBe("[dedup: see earlier read result x1]");
-    expect(state.tokensSavedByType.dedup ?? 0).toBe(0);
+    expect((result.messages as any)[1].content[0].text).toBe("[dedup: see earlier grep result x1]");
+    expect(state.tokensKeptOutByType.dedup ?? 0).toBe(0);
     expect(state.tokensKeptOutByType.dedup ?? 0).toBe(0);
   });
 
@@ -459,19 +505,19 @@ describe("materialize", () => {
     expect((result.messages as any)[1].content[0].text).toContain("build");
   });
 
-  it("deduplicates repeated normalized content from the same read input fingerprint", () => {
+  it("deduplicates repeated normalized content from the same grep input fingerprint", () => {
     const state = createSessionState("/tmp");
     const cfg = defaultConfig();
     cfg.strategies.deduplication.maxOccurrences = 1;
 
-    getOrCreateToolRecord(state, "t1", "read", { path: "a.log" }, false, 0);
-    getOrCreateToolRecord(state, "t2", "read", { path: "a.log" }, false, 0);
+    getOrCreateToolRecord(state, "t1", "grep", { path: "a.log" }, false, 0);
+    getOrCreateToolRecord(state, "t2", "grep", { path: "a.log" }, false, 0);
 
     const msgs = [
       {
         role: "toolResult",
         content: [{ type: "text", text: "build 2026-04-14T10:11:12Z abcdefab-cdef-4123-89ab-abcdefabcdef" }],
-        toolName: "read",
+        toolName: "grep",
         isError: false,
         toolCallId: "t1",
         _key: "t1",
@@ -479,7 +525,7 @@ describe("materialize", () => {
       {
         role: "toolResult",
         content: [{ type: "text", text: "build 2026-04-15T11:12:13Z 12345678-1234-4123-8234-1234567890ab" }],
-        toolName: "read",
+        toolName: "grep",
         isError: false,
         toolCallId: "t2",
         _key: "t2",
@@ -489,7 +535,7 @@ describe("materialize", () => {
     const result = materializeContext(msgs, { state, config: cfg });
 
     expect((result.messages as any)[0].content[0].text).toContain("build");
-    expect((result.messages as any)[1].content[0].text).toBe("[dedup: see earlier read result x1]");
+    expect((result.messages as any)[1].content[0].text).toBe("[dedup: see earlier grep result x1]");
   });
 
   it("does not crash when a rebuilt tool record has an undefined fingerprint", () => {

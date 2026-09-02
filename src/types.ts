@@ -1,5 +1,3 @@
-import type { TextContent, ImageContent } from "@mariozechner/pi-ai";
-
 export interface SystemHintState {
   lastAppliedText: string | null;
   appliedOnce: boolean;
@@ -8,7 +6,8 @@ export interface SystemHintState {
 export interface ToolRecord {
   toolCallId: string;
   toolName: string;
-  inputArgs: unknown;
+  /** Raw tool input, kept in memory only; the fingerprint is what persists. */
+  inputArgs?: unknown;
   inputFingerprint: string;
   isError: boolean;
   turnIndex: number;
@@ -16,15 +15,6 @@ export interface ToolRecord {
   tokenEstimate: number;
   inferredFromContext?: boolean;
   awaitingAuthoritativeTurn?: boolean;
-  shapedContent?: (TextContent | ImageContent)[];
-}
-
-export interface PruneTarget {
-  toolCallId: string;
-  turnIndex: number;
-  indexedAt: number;
-  summaryRef: string;
-  replacementText: string;
 }
 
 export interface TurnSnapshot {
@@ -32,7 +22,6 @@ export interface TurnSnapshot {
   toolCount: number;
   messageCountAfterTurn: number;
   tokensKeptOutDelta: number;
-  tokensSavedDelta: number;
   timestamp: number;
 }
 
@@ -40,13 +29,10 @@ export type PersistedToolCall = [string, ToolRecord];
 
 export interface PersistedSessionState {
   toolCalls: PersistedToolCall[];
-  prunedToolIds: string[];
-  pruneTargets: PruneTarget[];
-  lastIndexedTurn: number;
   tokensKeptOutTotal: number;
-  tokensSaved: number;
   tokensKeptOutByType: Record<string, number>;
-  tokensSavedByType: Record<string, number>;
+  /** Kept-out total as of the last turn boundary, for exact per-turn deltas. */
+  tokensKeptOutAtLastTurn: number;
   currentTurn: number;
   countedSavingsIds: string[];
   turnHistory: TurnSnapshot[];
@@ -62,18 +48,13 @@ export type StrategyName =
   | "code_filter"
   | "truncation"
   | "dedup"
-  | "error_purge"
-  | "background_index";
+  | "error_purge";
 
 export interface SessionState {
   toolCalls: Map<string, ToolRecord>;
-  prunedToolIds: Set<string>;
-  pruneTargets: PruneTarget[];
-  lastIndexedTurn: number;
   tokensKeptOutTotal: number;
-  tokensSaved: number;
   tokensKeptOutByType: Record<string, number>;
-  tokensSavedByType: Record<string, number>;
+  tokensKeptOutAtLastTurn: number;
   currentTurn: number;
   countedSavingsIds: Set<string>;
   turnHistory: TurnSnapshot[];
@@ -85,10 +66,3 @@ export interface SessionState {
   systemHintState: SystemHintState;
 }
 
-export interface StrategyResult {
-  strategy: StrategyName;
-  toolId: string;
-  tokensSaved: number;
-  tokensKeptOut: number;
-  replacement?: string;
-}

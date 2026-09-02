@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import { fingerprintDedup, normalizeContent } from "../src/strategies/dedup";
 
 describe("dedup", () => {

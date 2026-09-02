@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "bun:test";
 import { createAnalyticsStore } from "../src/analytics/store.js";
 
 describe("analytics store", () => {
@@ -70,7 +70,7 @@ describe("analytics store", () => {
     }
   });
 
-  it("normalizes context percent values from Pi's 0-100 contract", () => {
+  it("stores context percent in host units, 0 to 100", () => {
     const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-analytics-"));
     const dbPath = path.join(tmpDir, "analytics.sqlite");
     const timestamp = Date.now();
@@ -106,8 +106,8 @@ describe("analytics store", () => {
         ],
       });
 
-      expect(snapshot.context.percent).toBeCloseTo(0.11617);
-      expect(snapshot.recentImpactEvents[0]?.contextPercent).toBeCloseTo(0.11617);
+      expect(snapshot.context.percent).toBeCloseTo(11.617);
+      expect(snapshot.recentImpactEvents[0]?.contextPercent).toBeCloseTo(11.617);
 
       store.close();
     } finally {
@@ -510,58 +510,4 @@ describe("analytics store", () => {
     }
   });
 
-  it("keeps getSnapshot as a compatibility alias for the legacy session snapshot", () => {
-    const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-analytics-"));
-    const dbPath = path.join(tmpDir, "analytics.sqlite");
-    const timestamp = Date.now();
-
-    try {
-      const store = createAnalyticsStore({ dbPath, retentionDays: 30 });
-
-      store.recordTurn({
-        sessionId: "session-compat",
-        projectPath: "/tmp/project-compat",
-        turnIndex: 4,
-        toolCount: 1,
-        messageCountAfterTurn: 3,
-        timestamp,
-        contextTokens: 100,
-        contextPercent: 0.1,
-        contextWindow: 1000,
-        tokensSavedApprox: 10,
-        tokensKeptOutApprox: 20,
-      });
-
-      const snapshot = store.getSnapshot("session-compat");
-
-      expect(snapshot).toMatchObject({
-        sessionId: "session-compat",
-        projectPath: "/tmp/project-compat",
-        totalTurns: 1,
-        totals: {
-          tokensSavedApprox: 10,
-          tokensKeptOutApprox: 20,
-        },
-        context: {
-          tokens: 100,
-          percent: 0.1,
-          window: 1000,
-        },
-        latestTurn: {
-          sessionId: "session-compat",
-          projectPath: "/tmp/project-compat",
-          turnIndex: 4,
-          contextTokens: 100,
-          contextPercent: 0.1,
-          contextWindow: 1000,
-          tokensSavedApprox: 10,
-          tokensKeptOutApprox: 20,
-        },
-      });
-
-      store.close();
-    } finally {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    }
-  });
 });

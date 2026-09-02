@@ -1,11 +1,11 @@
-import fs from "fs";
-import os from "node:os";
-import path from "node:path";
+import fs from "node:fs";
 import YAML from "yaml";
+import { resolveRuntimeConfigPath } from "./paths.js";
 
 export interface ShortCircuitConfig {
   enabled: boolean;
-  minTokens: number;
+  /** Results longer than this many estimated tokens are never short-circuited. */
+  maxTokens: number;
 }
 
 export interface CodeFilterConfig {
@@ -25,18 +25,16 @@ export interface TruncationConfig {
 export interface DeduplicationConfig {
   enabled: boolean;
   maxOccurrences: number;
+}
+
+export interface ShapingConfig {
+  /** Tools whose results no strategy rewrites (02-shaping.md SHAPE-012). */
   protectedTools: string[];
 }
 
 export interface ErrorPurgeConfig {
   enabled: boolean;
   maxTurnsAgo: number;
-}
-
-export interface BackgroundIndexingConfig {
-  enabled: boolean;
-  minRangeTurns: number;
-  protectedTools: string[];
 }
 
 export interface AnalyticsConfig {
@@ -47,20 +45,14 @@ export interface AnalyticsConfig {
 
 export interface DashboardConfig {
   enabled: boolean;
-  port: number;
-  bindHost: string;
+  /** Host key id that opens the overlay (04-analytics-and-dashboard.md DASH-036). */
+  shortcut: string;
 }
 
 export interface SystemHintConfig {
   enabled: boolean;
   text: string;
   frequency: "always" | "once_per_session" | "on_change";
-}
-
-export interface NativeCompactionIntegrationConfig {
-  enabled: boolean;
-  fallbackOnFailure: boolean;
-  maxContextSize: number;
 }
 
 export interface PCNConfig {
@@ -71,11 +63,10 @@ export interface PCNConfig {
     deduplication: DeduplicationConfig;
     errorPurge: ErrorPurgeConfig;
   };
-  backgroundIndexing: BackgroundIndexingConfig;
+  shaping: ShapingConfig;
   analytics: AnalyticsConfig;
   dashboard: DashboardConfig;
   systemHint: SystemHintConfig;
-  nativeCompactionIntegration: NativeCompactionIntegrationConfig;
 }
 
 type PlainObject = Record<string, unknown>;
@@ -85,10 +76,10 @@ export function defaultConfig(): PCNConfig {
     strategies: {
       shortCircuit: {
         enabled: true,
-        minTokens: 8000,
+        maxTokens: 2000,
       },
       codeFilter: {
-        enabled: true,
+        enabled: false,
         keepDocstrings: true,
         maxBodyLines: 200,
         keepImports: true,
@@ -102,17 +93,14 @@ export function defaultConfig(): PCNConfig {
       deduplication: {
         enabled: true,
         maxOccurrences: 2,
-        protectedTools: ["write", "edit"],
       },
       errorPurge: {
         enabled: true,
         maxTurnsAgo: 3,
       },
     },
-    backgroundIndexing: {
-      enabled: true,
-      minRangeTurns: 8,
-      protectedTools: [],
+    shaping: {
+      protectedTools: ["write", "edit", "task"],
     },
     analytics: {
       enabled: true,
@@ -121,18 +109,12 @@ export function defaultConfig(): PCNConfig {
     },
     dashboard: {
       enabled: true,
-      port: 48900,
-      bindHost: "127.0.0.1",
+      shortcut: "alt+n",
     },
     systemHint: {
       enabled: true,
       text: "Context management is handled automatically in the background. You do not need to manage context yourself.",
       frequency: "once_per_session",
-    },
-    nativeCompactionIntegration: {
-      enabled: false,
-      fallbackOnFailure: true,
-      maxContextSize: 0,
     },
   };
 }
@@ -178,12 +160,8 @@ export function loadConfig(configPath: string): PCNConfig {
   return deepMerge(asPlainObject(defaults), parsed);
 }
 
-export function resolveRuntimeConfigPath(): string {
-  return process.env.PCN_CONFIG_PATH ?? path.join(os.homedir(), ".pi-ninja", "config.yaml");
-}
-
 export function loadRuntimeConfig(): PCNConfig {
   return loadConfig(resolveRuntimeConfigPath());
 }
 
-export { deepMerge };
+export { deepMerge, resolveRuntimeConfigPath };

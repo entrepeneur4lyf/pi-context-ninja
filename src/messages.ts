@@ -1,5 +1,5 @@
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
-import type { TextContent, ToolResultMessage } from "@mariozechner/pi-ai";
+import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
+import type { TextContent, ToolResultMessage } from "@oh-my-pi/pi-ai";
 
 type ToolResultBlock = ToolResultMessage["content"][number];
 type ToolResultContent = ToolResultMessage["content"];

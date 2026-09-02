@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
+import { getProjectDir } from "../paths.js";
 
-const CONTROL_DIR_PARTS = [".pi", ".pi-ninja"] as const;
 const DISABLED_MARKER = ".pcn_disabled";
 const DASHBOARD_DISABLED_MARKER = ".pcn_dashboard_disabled";
 
@@ -26,8 +26,9 @@ export function normalizeProjectPath(projectPath: string): string {
   return path.resolve(requireProjectPath(projectPath));
 }
 
+/** `<project>/.omp/pcn/`, the one project-local directory PCN owns (PCN-005). */
 export function resolveProjectControlDir(projectPath: string): string {
-  return path.join(normalizeProjectPath(projectPath), ...CONTROL_DIR_PARTS);
+  return getProjectDir(normalizeProjectPath(projectPath));
 }
 
 export function ensureProjectControlDir(projectPath: string): string {

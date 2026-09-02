@@ -8,7 +8,7 @@ export function applySafeToolTextShaping(text: string, config: PCNConfig): strin
   let changed = false;
 
   if (config.strategies.shortCircuit.enabled) {
-    const candidate = shortCircuit(next, false, config.strategies.shortCircuit.minTokens);
+    const candidate = shortCircuit(next, false, config.strategies.shortCircuit.maxTokens);
     if (candidate !== null) {
       next = candidate;
       changed = true;

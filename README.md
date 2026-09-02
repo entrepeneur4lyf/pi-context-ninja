@@ -1,212 +1,206 @@
 # Pi Context Ninja
 
-Silent-first context optimization package for Pi.
+Silent-first context freshness extension for [oh-my-pi](https://omp.sh).
 
-```bash
-pi install https://github.com/entrepeneur4lyf/pi-context-ninja
-```
-
-Reduces context window usage automatically by compressing, deduplicating, and pruning tool results — with zero disruption to agent behavior.
+PCN keeps the model's request context short and fresh. Repeated outputs,
+stale errors, and oversized results are rewritten before each request,
+and every kept-out token is credited to the strategy that removed it.
+The model sees a shorter, fresher context and at most one passive hint
+per session. It never sees a compression workflow.
 
 ## Install
 
-Install as a Pi package with the command above.
+```bash
+omp install github:entrepeneur4lyf/pi-context-ninja
+```
 
-After install, Pi discovers the extension through this package's `package.json` `pi.extensions` manifest and loads it automatically.
-
-Check the current project state with:
+oh-my-pi discovers the extension through the `omp.extensions` manifest in
+`package.json` and loads it on the next start. Check it with:
 
 ```text
 /pcn status
 ```
 
-## Local Development
+## Local development
+
+Requires Bun 1.3.14 or newer.
 
 ```bash
-pi --extension ./src/index.ts
+bun install
+omp --plugin-dir .           # run one session with this checkout loaded
 ```
 
-Use `--extension` for quick local testing from the repo root. This is the right path for development, but the normal user install path is `pi install <git-repo>`.
+## Runtime model
 
-The extension is configured via an optional YAML file at `~/.pi-ninja/config.yaml` by default. Set a custom path with `PCN_CONFIG_PATH`.
+PCN has two layers:
 
-## Runtime Model
+- **Control plane**: the `/pcn` command and the project control state.
+  Available whenever the extension is loaded, even when the data plane
+  failed to start, so `/pcn doctor` can always say what is wrong.
+- **Data plane**: the hook runtime. It records tool provenance, shapes
+  tool results, credits kept-out tokens, records analytics, and serves
+  the dashboard.
 
-Pi Context Ninja has two layers:
-
-- **Control plane**: always available when the package is installed, including `/pcn status`, `/pcn doctor`, `/pcn export`, `/pcn enable`, and `/pcn disable`
-- **Data plane**: the silent-first runtime that hooks into Pi events and performs context shaping, analytics, dashboard publishing, and optional native compaction participation
-
-Project-local enablement lives under `.pi/.pi-ninja/`:
+Project control state lives in marker files under `<project>/.omp/pcn/`:
 
 - default: enabled
-- `.pi/.pi-ninja/.pcn_disabled`: disables Pi Context Ninja for the current project
-- `.pi/.pi-ninja/.pcn_dashboard_disabled`: disables dashboard publishing for the current project
+- `.pcn_disabled`: PCN is off for this project
+- `.pcn_dashboard_disabled`: the dashboard is off for this project
 
-When the package is not discovered or loaded by Pi, neither the `/pcn` commands nor the runtime hooks are active.
+Session state travels with the host session as a custom entry of type
+`com.pcn.session-state`. Branches, forks, and resumes carry PCN's
+bookkeeping with the conversation. PCN writes no state files of its own.
 
 ## Configuration
 
+The config file is `<agent-dir>/pcn/config.yaml`, where the agent
+directory is `~/.omp/agent` or `PI_CODING_AGENT_DIR`. Set `PCN_CONFIG_PATH`
+to use another file. Every key is optional; these are the defaults:
+
 ```yaml
-# ~/.pi-ninja/config.yaml
 strategies:
   shortCircuit:
     enabled: true
-    minTokens: 8000
-
+    maxTokens: 2000          # longer results are never short-circuited
   codeFilter:
-    enabled: true
+    enabled: false           # opt in; strips function bodies over maxBodyLines
     keepDocstrings: true
     maxBodyLines: 200
     keepImports: true
-
   truncation:
     enabled: true
     headLines: 100
     tailLines: 50
     minLines: 300
-
   deduplication:
     enabled: true
     maxOccurrences: 2
-    protectedTools:
-      - write
-      - edit
-
   errorPurge:
     enabled: true
     maxTurnsAgo: 3
 
-# Background index of file ranges for prune hints
-backgroundIndexing:
-  enabled: true
-  minRangeTurns: 8
-  # Tool results that are never indexed/pruned. Protect tools whose output
-  # cannot be re-fetched (subagent reports, job polls, peer messages).
+shaping:
+  # Tools whose results no strategy ever rewrites.
   protectedTools:
+    - write
+    - edit
     - task
-    - job
-    - irc
 
-# Token savings analytics stored in SQLite
 analytics:
   enabled: true
-  dbPath: ""
+  dbPath: ""                 # default: <project>/.omp/pcn/analytics.sqlite
   retentionDays: 30
 
-# Web dashboard
 dashboard:
   enabled: true
-  port: 48900
-  bindHost: "127.0.0.1"
+  shortcut: "alt+n"          # host key id that opens the overlay
 
-# Optional native compaction integration
-nativeCompactionIntegration:
-  enabled: false
-  fallbackOnFailure: true
-  maxContextSize: 32768
-
-# System hint injected into sessions
 systemHint:
   enabled: true
   text: "Context management is handled automatically in the background. You do not need to manage context yourself."
-  frequency: "once_per_session"
+  frequency: "once_per_session"   # or "always", "on_change"
 ```
+
+Unknown keys are dropped without error.
 
 ## Strategies
 
-The compression pipeline applies six strategies in order to each tool result message:
+At request time (the host's `context` hook), each tool result with a
+single text block passes through, in this order:
 
-1. **Short Circuit** — Replaces empty or trivial tool results with a compact placeholder.
-2. **Code Filter** — Strips code bodies beyond a threshold while preserving signatures, imports, and docstrings.
-3. **Truncation** — Head/tail truncation for oversized content, keeping relevant context at both ends.
-4. **Deduplication** — Fingerprint-based dedup that collapses repeated tool results beyond a configurable occurrence count.
-5. **Error Purge** — Replaces stale error outputs (older than N turns) with minimal tombstones.
-6. **View-Layer Pruning** — Applies omit-ranges from the background index to surgically remove unreferenced file content at the message level. Tools listed in `backgroundIndexing.protectedTools` are never indexed or pruned — use this for results that cannot be re-fetched (subagent reports, job completions, peer messages).
+1. **Error purge**: an error result older than `maxTurnsAgo` turns becomes
+   a one-line notice. No other strategy touches error results.
+2. **Short circuit**: a small success payload (`{"status":"ok"}`,
+   `12 passed`, `Already up to date`, `file written`) becomes a one-line
+   notice, when the result is at most `maxTokens` long.
+3. **Code filter** (opt-in): function bodies over `maxBodyLines` are
+   dropped while signatures, imports, and docstrings stay.
+4. **Truncation**: results of at least `minLines` lines keep their head and
+   tail with an omitted-lines marker.
+5. **Deduplication**: content seen more than `maxOccurrences` times in the
+   same request becomes a notice pointing at the earlier copy.
+
+Short circuit and truncation also run once at `tool_result` time; the host
+stores that shaped result.
+
+Some results are never rewritten:
+
+- results of the `read` tool, because the next `edit` needs their line
+  anchors;
+- any result carrying a hashline header (`[path#hash]`);
+- results of the tools in `shaping.protectedTools`;
+- results the host has already pruned (`prunedAt` set).
+
+oh-my-pi's own compaction, age-based pruning, and superseded-read
+handling keep running underneath. PCN complements them and does not
+replace them.
 
 ## Dashboard
 
-The analytics dashboard is optional observability. It shows the current session's exact Pi context percentage, approximate tokens kept out, turn count, and a live event log.
+PCN draws on two host surfaces and opens no network port.
 
-Default dashboard URL:
+- A status-line item, `pcn 12.3k kept out`, shows the session's kept-out
+  tokens and refreshes after every turn.
+- An overlay opens over the transcript on `/pcn dashboard` or the
+  `dashboard.shortcut` key (default `alt+n`). It shows context usage,
+  kept-out totals per session, project, and lifetime, per-strategy
+  totals, and the most recent impact events. It refreshes while open and
+  closes on Escape or `q`.
 
-```
-http://127.0.0.1:48900
-```
+Figures are approximate (characters divided by four) until the host
+tokenizer lands. When the analytics store is unavailable, the overlay
+says so and shows the live session counters only. Headless, RPC, and ACP
+modes skip both surfaces. Disable the dashboard per project with
+`/pcn disable dashboard`, or globally with `dashboard.enabled: false`.
 
-Enabled by default. Change the port or bind address in the config, or disable it entirely when you want silent-only operation.
+## Files
 
-## Architecture
-
-Pi Context Ninja operates as a **view-layer pruning** extension via Pi's `context` hook. It intercepts the message list before it is materialized into the model's context window, applying transformations in-place without modifying the conversation history. The agent sees the same conversation; only the context window payload is compressed.
-
-```
-User/Agent  ──→  Pi Core  ──→  context hook  ──→  [Pruned/Compressed Messages]  ──→  LLM
-```
-
-## Project Structure
-
-```
-pi-context-ninja/
-├── src/
-│   ├── index.ts              # Extension entry point
-│   ├── config.ts             # YAML config loading + defaults
-│   ├── state.ts              # Session state management
-│   ├── types.ts              # Shared TypeScript types
-│   ├── messages.ts           # Message content extraction/replacement
-│   ├── normalizer.ts         # Content normalization utilities
-│   ├── strategies/
-│   │   ├── materialize.ts    # Pipeline orchestrator
-│   │   ├── short-circuit.ts  # Strategy 1: skip empty results
-│   │   ├── code-filter.ts    # Strategy 2: strip code bodies
-│   │   ├── truncation.ts     # Strategy 3: head/tail truncate
-│   │   ├── dedup.ts          # Strategy 4: fingerprint dedup
-│   │   ├── error-purge.ts    # Strategy 5: purge old errors
-│   │   └── pruning.ts        # Strategy 6: view-layer omit ranges
-│   ├── compression/
-│   │   ├── summarizer.ts     # Summarizer for range content
-│   │   ├── range-selection.ts # Range selection heuristics
-│   │   └── index-entry.ts    # Index entry model
-│   ├── persistence/
-│   │   ├── index-store.ts    # SQLite-backed range index
-│   │   └── state-store.ts    # Session state persistence
-│   ├── analytics/
-│   │   ├── store.ts          # Analytics SQLite store
-│   │   └── types.ts          # Analytics event types
-│   └── dashboard/
-│       ├── server.ts         # HTTP dashboard server
-│       └── pages.ts          # Dashboard page templates
-├── test/
-│   ├── materialize.test.ts
-│   ├── dedup.test.ts
-│   ├── pruning.test.ts
-│   ├── error-purge.test.ts
-│   ├── range-selection.test.ts
-│   ├── analytics.test.ts
-│   ├── index-store.test.ts
-│   ├── state-store.test.ts
-│   └── index-entry.test.ts
-└── package.json
-```
+| Location | Contents |
+| --- | --- |
+| `<project>/.omp/pcn/` | control markers, `analytics.sqlite`, `reports/` |
+| `<agent-dir>/pcn/config.yaml` | configuration |
+| host session file | PCN session state as custom entries |
 
 ## Commands
 
 | Command | Description |
 | --- | --- |
-| `/pcn status` | Show current project status and effective runtime mode |
-| `/pcn doctor` | Show detailed diagnostics for the current project |
-| `/pcn export` | Export the latest diagnostic report to Markdown |
-| `/pcn enable` | Enable Pi Context Ninja for the current project |
-| `/pcn disable` | Disable Pi Context Ninja for the current project |
-| `/pcn enable dashboard` | Enable dashboard publishing for the current project |
-| `/pcn disable dashboard` | Disable dashboard publishing for the current project |
-| `npm run typecheck` | TypeScript type checking |
-| `npm run test` | Run test suite |
-| `npm run test:watch` | Run tests in watch mode |
+| `/pcn status` | Mode, config path, and whether the dashboard is active |
+| `/pcn doctor` | Diagnostics, including any degraded reasons |
+| `/pcn export` | Write the doctor report to `<project>/.omp/pcn/reports/` |
+| `/pcn dashboard` | Open the dashboard overlay |
+| `/pcn enable` / `/pcn disable` | Turn PCN on or off for this project |
+| `/pcn enable dashboard` / `/pcn disable dashboard` | Turn the dashboard on or off for this project |
+
+## Project structure
+
+```
+pi-context-ninja/
+├── src/
+│   ├── index.ts                  # Extension entry: /pcn first, then the data plane
+│   ├── config.ts                 # YAML config and defaults
+│   ├── paths.ts                  # Agent, user, and project directories
+│   ├── state.ts                  # Session state and kept-out credits
+│   ├── types.ts                  # Shared types
+│   ├── messages.ts               # Tool result text helpers
+│   ├── normalizer.ts             # Fingerprint normalization
+│   ├── control/                  # /pcn command, markers, status, doctor, export
+│   ├── runtime/
+│   │   └── create-extension-runtime.ts   # Hook handlers and session lifecycle
+│   ├── strategies/               # protection, materialize, safe-shaping, and the five strategies
+│   ├── persistence/
+│   │   └── session-entries.ts    # Session state as host custom entries
+│   ├── analytics/                # bun:sqlite store and types
+│   └── dashboard/                # Status-line item and overlay on the host UI
+├── test/                         # bun:test, one file per module
+├── docs/                         # local working documents, not tracked
+└── package.json
+```
 
 ## Verification
 
 ```bash
-npm run check
-npm test -- test/runtime-hooks.test.ts
+bun run check                        # typecheck, then all tests
+bun test test/runtime-hooks.test.ts  # the host boundary
+omp --plugin-dir .                   # then /pcn doctor inside the session
 ```

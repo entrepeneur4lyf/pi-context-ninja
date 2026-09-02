@@ -83,8 +83,6 @@ export interface LegacyAnalyticsSnapshot {
   recentTurns: AnalyticsTurnRecord[];
 }
 
-export type AnalyticsSnapshot = DashboardSnapshot | LegacyAnalyticsSnapshot;
-
 export interface AnalyticsStoreOptions {
   dbPath: string;
   retentionDays?: number;
@@ -94,6 +92,5 @@ export interface AnalyticsStore {
   recordTurn(turn: AnalyticsTurnWrite): DashboardSnapshot;
   getDashboardSnapshot(sessionId: string, projectPath: string, limit?: number): DashboardSnapshot;
   getStrategyImpactTotals(sessionId: string): Record<string, StrategyImpactTotals>;
-  getSnapshot(sessionId: string, limit?: number): LegacyAnalyticsSnapshot;
   close(): void;
 }

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "bun:test";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -34,7 +34,7 @@ describe("project control state", () => {
     const projectDir = makeProjectDir();
     const state = readProjectControlState(projectDir);
 
-    expect(resolveProjectControlDir(projectDir)).toBe(path.join(projectDir, ".pi", ".pi-ninja"));
+    expect(resolveProjectControlDir(projectDir)).toBe(path.join(projectDir, ".omp", "pcn"));
     expect(state.enabled).toBe(true);
     expect(state.dashboardEnabled).toBe(true);
     expect(isProjectEnabled(projectDir)).toBe(true);

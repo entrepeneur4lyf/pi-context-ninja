@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { disableProject, disableProjectDashboard } from "../src/control/project-state.js";
 import { buildProjectDoctorReport } from "../src/control/doctor.js";
 import { exportProjectDoctorReport } from "../src/control/export.js";
@@ -58,7 +58,7 @@ describe("project control reporting", () => {
     expect(report.findings).toContain("dashboard startup failed");
   });
 
-  it("exports a markdown report beneath .pi/.pi-ninja/reports", () => {
+  it("exports a markdown report beneath .omp/pcn/reports", () => {
     const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), "pcn-control-status-"));
     const reportPath = exportProjectDoctorReport({
       projectPath: projectDir,
@@ -70,7 +70,7 @@ describe("project control reporting", () => {
       }),
     });
 
-    expect(reportPath).toContain(path.join(".pi", ".pi-ninja", "reports"));
+    expect(reportPath).toContain(path.join(".omp", "pcn", "reports"));
     const reportBody = fs.readFileSync(reportPath, "utf8");
     expect(reportBody).toContain("# Pi Context Ninja Diagnostic Report");
     expect(reportBody).toContain("Config path: `/tmp/config.yaml`");

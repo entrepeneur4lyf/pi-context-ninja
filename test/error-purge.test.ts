@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect } from "bun:test";
 import { makeErrorTombstone, shouldPurgeError } from "../src/strategies/error-purge";
 
 describe("error-purge", () => {

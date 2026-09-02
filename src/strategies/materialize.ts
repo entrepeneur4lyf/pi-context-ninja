@@ -1,4 +1,4 @@
-import type { AgentMessage } from "@mariozechner/pi-agent-core";
+import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { PCNConfig } from "../config.js";
 import type { SessionState } from "../types.js";
 import {
@@ -7,7 +7,8 @@ import {
   isToolResultMessage,
   replaceSingleToolTextContent,
 } from "../messages.js";
-import { creditSavings } from "../state.js";
+import { creditKeptOut } from "../state.js";
+import { hasHashlineHeader, isHostPruned, isProtectedTool, isReadResult } from "./protection.js";
 import { shortCircuit } from "./short-circuit.js";
 import { codeFilter, detectLanguage } from "./code-filter.js";
 import { headTailTruncate } from "./truncation.js";
@@ -17,6 +18,11 @@ import { shouldPurgeError, makeErrorTombstone } from "./error-purge.js";
 export interface MaterializeOptions {
   state: SessionState;
   config: PCNConfig;
+}
+
+/** Kept-out tokens are approximate: characters divided by four. */
+function approxTokens(chars: number): number {
+  return Math.max(0, Math.ceil(chars / 4));
 }
 
 export function materializeContext(
@@ -31,13 +37,21 @@ export function materializeContext(
       return msg;
     }
 
+    const toolName = (msg as any).toolName ?? "";
+    if (isHostPruned(msg) || isProtectedTool(toolName, config)) {
+      return msg;
+    }
+
     const textBlockCount = countToolTextBlocks(msg);
     const canRewriteText = textBlockCount === 1;
     const originalText = extractTextContent(msg);
-    const toolName = (msg as any).toolName ?? "";
     const toolCallId = (msg as any).toolCallId ?? "";
     const toolRecord = state.toolCalls.get(toolCallId);
     const isErr = !!(msg as any).isError;
+
+    if (!isErr && (isReadResult(toolName) || hasHashlineHeader(originalText))) {
+      return msg;
+    }
 
     if (isErr) {
       if (config.strategies.errorPurge.enabled) {
@@ -57,13 +71,7 @@ export function materializeContext(
           }
 
           const candidate = makeErrorTombstone(config.strategies.errorPurge.maxTurnsAgo);
-          creditSavings(
-            state,
-            toolCallId,
-            "error_purge",
-            Math.max(0, originalText.length - candidate.length),
-            Math.max(0, originalText.length - candidate.length),
-          );
+          creditKeptOut(state, toolCallId, "error_purge", approxTokens(originalText.length - candidate.length));
           return replaceSingleToolTextContent(msg, candidate);
         }
       }
@@ -75,16 +83,10 @@ export function materializeContext(
     let rewriteText: string | null = null;
 
     if (config.strategies.shortCircuit.enabled && !isErr) {
-      const candidate = shortCircuit(dedupText, isErr, config.strategies.shortCircuit.minTokens);
+      const candidate = shortCircuit(dedupText, isErr, config.strategies.shortCircuit.maxTokens);
       if (candidate !== null) {
         if (canRewriteText) {
-          creditSavings(
-            state,
-            toolCallId,
-            "short_circuit",
-            Math.max(0, dedupText.length - candidate.length),
-            Math.max(0, dedupText.length - candidate.length),
-          );
+          creditKeptOut(state, toolCallId, "short_circuit", approxTokens(dedupText.length - candidate.length));
         }
         dedupText = candidate;
         if (canRewriteText) {
@@ -103,13 +105,7 @@ export function materializeContext(
         );
         if (candidate !== null) {
           if (canRewriteText) {
-            creditSavings(
-              state,
-              toolCallId,
-              "code_filter",
-              Math.max(0, dedupText.length - candidate.length),
-              Math.max(0, dedupText.length - candidate.length),
-            );
+            creditKeptOut(state, toolCallId, "code_filter", approxTokens(dedupText.length - candidate.length));
           }
           dedupText = candidate;
           if (canRewriteText) {
@@ -123,13 +119,7 @@ export function materializeContext(
       const candidate = headTailTruncate(dedupText, config.strategies.truncation);
       if (candidate !== null) {
         if (canRewriteText) {
-          creditSavings(
-            state,
-            toolCallId,
-            "truncation",
-            Math.max(0, dedupText.length - candidate.length),
-            Math.max(0, dedupText.length - candidate.length),
-          );
+          creditKeptOut(state, toolCallId, "truncation", approxTokens(dedupText.length - candidate.length));
         }
         dedupText = candidate;
         if (canRewriteText) {
@@ -157,17 +147,11 @@ export function materializeContext(
           fingerprint,
           seen,
           config.strategies.deduplication.maxOccurrences,
-          config.strategies.deduplication.protectedTools,
+          config.shaping.protectedTools,
         );
         if (candidate !== null) {
           if (canRewriteText) {
-            creditSavings(
-              state,
-              toolCallId,
-              "dedup",
-              Math.max(0, dedupText.length - candidate.length),
-              Math.max(0, dedupText.length - candidate.length),
-            );
+            creditKeptOut(state, toolCallId, "dedup", approxTokens(dedupText.length - candidate.length));
             rewriteText = candidate;
           }
         }

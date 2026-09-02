@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import Database from "better-sqlite3";
+import { Database, type SQLQueryBindings } from "bun:sqlite";
 import type {
   AnalyticsStore,
   AnalyticsStoreOptions,
@@ -47,16 +47,29 @@ interface StrategyImpactTotalsRow {
   tokensKeptOutApprox: number;
 }
 
+/**
+ * bun:sqlite binds named parameters only when the object keys carry the
+ * prefix used in the SQL. Keys without a matching parameter are ignored by
+ * SQLite, so extra fields on a record are harmless. Values that SQLite
+ * cannot store (arrays, objects, undefined) are dropped or nulled.
+ */
+function namedBindings(values: Record<string, unknown>): NamedStatementParams {
+  const out: NamedStatementParams = {};
+  for (const [key, value] of Object.entries(values)) {
+    if (value === undefined || value === null) {
+      out[`@${key}`] = null;
+    } else if (typeof value === "string" || typeof value === "number" || typeof value === "bigint") {
+      out[`@${key}`] = value;
+    }
+  }
+  return out;
+}
+
+type NamedStatementParams = Record<string, string | number | bigint | null>;
+
+/** Context percent is stored in host units, 0 to 100 (HOST-050). */
 function normalizeContextPercent(value: number | null | undefined): number | null {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return null;
-  }
-
-  if (value > 1) {
-    return value / 100;
-  }
-
-  return value;
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
 
 const CREATE_TABLE_SQL = `
@@ -200,15 +213,15 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
   const dbPath = path.resolve(options.dbPath);
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 
-  const db = new Database(dbPath);
-  db.pragma("journal_mode = WAL");
+  const db = new Database(dbPath, { create: true });
+  db.exec("PRAGMA journal_mode = WAL");
   db.exec(CREATE_TABLE_SQL);
   db.exec(CREATE_INDEX_SQL);
   db.exec(CREATE_IMPACT_EVENTS_TABLE_SQL);
   db.exec(CREATE_IMPACT_EVENTS_INDEX_SQL);
   db.exec(CREATE_STRATEGY_TOTALS_TABLE_SQL);
 
-  const insertTurn = db.prepare(`
+  const insertTurn = db.prepare<unknown, NamedStatementParams>(`
     INSERT INTO turn_metrics (
       session_id,
       project_path,
@@ -236,7 +249,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     )
   `);
 
-  const selectRows = db.prepare<unknown[], AnalyticsRow>(`
+  const selectRows = db.prepare<AnalyticsRow, SQLQueryBindings[]>(`
     SELECT
       session_id,
       project_path,
@@ -255,7 +268,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     LIMIT ?
   `);
 
-  const selectSessionTotals = db.prepare<unknown[], AnalyticsTotalsRow>(`
+  const selectSessionTotals = db.prepare<AnalyticsTotalsRow, SQLQueryBindings[]>(`
     SELECT
       COUNT(*) AS totalTurns,
       COALESCE(SUM(tool_count), 0) AS totalToolCalls,
@@ -265,7 +278,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     WHERE session_id = ?
   `);
 
-  const selectProjectTotals = db.prepare<unknown[], AnalyticsTotalsRow>(`
+  const selectProjectTotals = db.prepare<AnalyticsTotalsRow, SQLQueryBindings[]>(`
     SELECT
       COUNT(*) AS totalTurns,
       COALESCE(SUM(tool_count), 0) AS totalToolCalls,
@@ -275,7 +288,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     WHERE project_path = ?
   `);
 
-  const selectLifetimeTotals = db.prepare<unknown[], AnalyticsTotalsRow>(`
+  const selectLifetimeTotals = db.prepare<AnalyticsTotalsRow, SQLQueryBindings[]>(`
     SELECT
       COUNT(*) AS totalTurns,
       COALESCE(SUM(tool_count), 0) AS totalToolCalls,
@@ -284,7 +297,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     FROM turn_metrics
   `);
 
-  const selectLatestSessionRow = db.prepare<unknown[], AnalyticsRow>(`
+  const selectLatestSessionRow = db.prepare<AnalyticsRow, SQLQueryBindings[]>(`
     SELECT
       session_id,
       project_path,
@@ -303,7 +316,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     LIMIT 1
   `);
 
-  const selectLatestProjectRow = db.prepare<unknown[], AnalyticsRow>(`
+  const selectLatestProjectRow = db.prepare<AnalyticsRow, SQLQueryBindings[]>(`
     SELECT
       session_id,
       project_path,
@@ -322,7 +335,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     LIMIT 1
   `);
 
-  const selectLatestLifetimeRow = db.prepare<unknown[], AnalyticsRow>(`
+  const selectLatestLifetimeRow = db.prepare<AnalyticsRow, SQLQueryBindings[]>(`
     SELECT
       session_id,
       project_path,
@@ -340,7 +353,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     LIMIT 1
   `);
 
-  const insertImpactEvent = db.prepare(`
+  const insertImpactEvent = db.prepare<unknown, NamedStatementParams>(`
     INSERT INTO impact_events (
       session_id,
       project_path,
@@ -366,7 +379,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     )
   `);
 
-  const selectRecentImpactEvents = db.prepare<unknown[], ImpactEventRow>(`
+  const selectRecentImpactEvents = db.prepare<ImpactEventRow, SQLQueryBindings[]>(`
     SELECT
       session_id,
       project_path,
@@ -384,7 +397,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     LIMIT ?
   `);
 
-  const selectStrategyImpactTotals = db.prepare<unknown[], StrategyImpactTotalsRow>(`
+  const selectStrategyImpactTotals = db.prepare<StrategyImpactTotalsRow, SQLQueryBindings[]>(`
     SELECT
       strategy,
       tokens_saved_approx AS tokensSavedApprox,
@@ -393,7 +406,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     WHERE session_id = ?
   `);
 
-  const upsertStrategyTotals = db.prepare(`
+  const upsertStrategyTotals = db.prepare<unknown, NamedStatementParams>(`
     INSERT INTO strategy_totals (
       session_id,
       strategy,
@@ -411,17 +424,18 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
   `);
 
   const writeTurn = db.transaction((turn: AnalyticsTurnWrite) => {
-    insertTurn.run({
+    insertTurn.run(namedBindings({
       ...turn,
       contextPercent: normalizeContextPercent(turn.contextPercent),
-    });
+    }));
     for (const event of sanitizeImpactEvents(turn.impactEvents)) {
       const normalizedEvent = {
         ...event,
         contextPercent: normalizeContextPercent(event.contextPercent),
       };
-      insertImpactEvent.run(normalizedEvent);
-      upsertStrategyTotals.run(normalizedEvent);
+      const bindings = namedBindings(normalizedEvent);
+      insertImpactEvent.run(bindings);
+      upsertStrategyTotals.run(bindings);
     }
   });
 
@@ -443,7 +457,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     scope: "session" | "project" | "lifetime",
     value?: string,
   ): AnalyticsTotalsRow {
-    if (scope === "session") {
+    if (scope === "session" && typeof value === "string") {
       return (selectSessionTotals.get(value) as AnalyticsTotalsRow | undefined) ?? {
         totalTurns: 0,
         totalToolCalls: 0,
@@ -471,7 +485,7 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     value?: string,
   ): AnalyticsTurnRecord | null {
     const row =
-      scope === "session"
+      scope === "session" && typeof value === "string"
         ? (selectLatestSessionRow.get(value) as AnalyticsRow | undefined)
         : scope === "project" && typeof value === "string"
           ? (selectLatestProjectRow.get(value) as AnalyticsRow | undefined)
@@ -540,21 +554,6 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     };
   }
 
-  function readLegacySnapshot(sessionId: string, limit = 50): LegacyAnalyticsSnapshot {
-    const rows = getRows(sessionId, limit);
-    const totals = getTotals("session", sessionId);
-    const snapshot = buildSnapshot(rows, sessionId);
-
-    return {
-      ...snapshot,
-      totalTurns: totals.totalTurns,
-      totals: {
-        tokensSavedApprox: totals.tokensSavedApprox,
-        tokensKeptOutApprox: totals.tokensKeptOutApprox,
-      },
-    };
-  }
-
   const store: AnalyticsStore = {
     recordTurn(turn: AnalyticsTurnWrite): DashboardSnapshot {
       writeTurn(turn);
@@ -563,9 +562,6 @@ export function createAnalyticsStore(options: AnalyticsStoreOptions): AnalyticsS
     },
     getDashboardSnapshot(sessionId: string, projectPath: string, limit = 50): DashboardSnapshot {
       return readDashboardSnapshot(sessionId, projectPath, limit);
-    },
-    getSnapshot(sessionId: string, limit = 50): LegacyAnalyticsSnapshot {
-      return readLegacySnapshot(sessionId, limit);
     },
     getStrategyImpactTotals(sessionId: string): Record<string, StrategyImpactTotals> {
       return getStrategyImpactTotals(sessionId);

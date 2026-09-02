@@ -8,13 +8,9 @@ import type {
 export function createSessionState(projectPath: string): SessionState {
   return {
     toolCalls: new Map(),
-    prunedToolIds: new Set(),
-    pruneTargets: [],
-    lastIndexedTurn: -1,
     tokensKeptOutTotal: 0,
-    tokensSaved: 0,
     tokensKeptOutByType: {},
-    tokensSavedByType: {},
+    tokensKeptOutAtLastTurn: 0,
     currentTurn: -1,
     countedSavingsIds: new Set(),
     turnHistory: [],
@@ -56,11 +52,15 @@ export function getOrCreateToolRecord(
   return record;
 }
 
-export function creditSavings(
+/**
+ * Credits kept-out tokens once per tool call and strategy
+ * (02-shaping.md SHAPE-120). Returns false when the pair was already
+ * credited.
+ */
+export function creditKeptOut(
   state: SessionState,
   toolCallId: string,
   strategy: string,
-  tokensSaved: number,
   tokensKeptOut: number,
 ): boolean {
   const key = `${toolCallId}:${strategy}`;
@@ -69,8 +69,6 @@ export function creditSavings(
 
   state.tokensKeptOutTotal += tokensKeptOut;
   state.tokensKeptOutByType[strategy] = (state.tokensKeptOutByType[strategy] ?? 0) + tokensKeptOut;
-  state.tokensSaved += tokensSaved;
-  state.tokensSavedByType[strategy] = (state.tokensSavedByType[strategy] ?? 0) + tokensSaved;
 
   return true;
 }
@@ -81,13 +79,9 @@ export function serializeSessionState(state: SessionState): PersistedSessionStat
       toolCallId,
       serializeToolRecord(record),
     ]),
-    prunedToolIds: [...state.prunedToolIds],
-    pruneTargets: state.pruneTargets.map((target) => ({ ...target })),
-    lastIndexedTurn: state.lastIndexedTurn,
     tokensKeptOutTotal: state.tokensKeptOutTotal,
-    tokensSaved: state.tokensSaved,
     tokensKeptOutByType: { ...state.tokensKeptOutByType },
-    tokensSavedByType: { ...state.tokensSavedByType },
+    tokensKeptOutAtLastTurn: state.tokensKeptOutAtLastTurn,
     currentTurn: state.currentTurn,
     countedSavingsIds: [...state.countedSavingsIds],
     turnHistory: state.turnHistory.map((snapshot) => ({ ...snapshot })),
@@ -105,13 +99,9 @@ export function hydrateSessionState(persisted: PersistedSessionState): SessionSt
       toolCallId,
       hydrateToolRecord(record),
     ])),
-    prunedToolIds: new Set(persisted.prunedToolIds),
-    pruneTargets: persisted.pruneTargets.map((target) => ({ ...target })),
-    lastIndexedTurn: persisted.lastIndexedTurn,
     tokensKeptOutTotal: persisted.tokensKeptOutTotal,
-    tokensSaved: persisted.tokensSaved,
     tokensKeptOutByType: { ...persisted.tokensKeptOutByType },
-    tokensSavedByType: { ...persisted.tokensSavedByType },
+    tokensKeptOutAtLastTurn: persisted.tokensKeptOutAtLastTurn,
     currentTurn: persisted.currentTurn,
     countedSavingsIds: new Set(persisted.countedSavingsIds),
     turnHistory: persisted.turnHistory.map((snapshot) => ({ ...snapshot })),
@@ -135,13 +125,9 @@ export function normalizePersistedSessionState(input: unknown): PersistedSession
 
   return {
     toolCalls: normalizeToolCalls(input.toolCalls),
-    prunedToolIds: normalizeStringArray(input.prunedToolIds),
-    pruneTargets: normalizePruneTargets(input.pruneTargets),
-    lastIndexedTurn: normalizeNumber(input.lastIndexedTurn, -1),
     tokensKeptOutTotal: normalizeNumber(input.tokensKeptOutTotal),
-    tokensSaved: normalizeNumber(input.tokensSaved),
     tokensKeptOutByType: normalizeRecord(input.tokensKeptOutByType),
-    tokensSavedByType: normalizeRecord(input.tokensSavedByType),
+    tokensKeptOutAtLastTurn: normalizeNumber(input.tokensKeptOutAtLastTurn),
     currentTurn: normalizeNumber(input.currentTurn, -1),
     countedSavingsIds: normalizeStringArray(input.countedSavingsIds),
     turnHistory,
@@ -159,18 +145,14 @@ function stableStringify(value: unknown): string {
   return typeof serialized === "string" ? serialized : "";
 }
 
+/** Persists everything but the raw input; the fingerprint carries what later turns need. */
 function serializeToolRecord(record: ToolRecord): ToolRecord {
-  return {
-    ...record,
-    shapedContent: record.shapedContent?.map((block) => ({ ...block })),
-  };
+  const { inputArgs: _inputArgs, ...rest } = record;
+  return { ...rest };
 }
 
 function hydrateToolRecord(record: ToolRecord): ToolRecord {
-  return {
-    ...record,
-    shapedContent: record.shapedContent?.map((block) => ({ ...block })),
-  };
+  return { ...record };
 }
 
 function normalizeToolCalls(value: unknown): [string, ToolRecord][] {
@@ -194,35 +176,6 @@ function normalizeStringArray(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === "string");
 }
 
-function normalizePruneTargets(value: unknown) {
-  if (!Array.isArray(value)) {
-    return [];
-  }
-
-  return value.filter(isRecord).flatMap((target) => {
-    const turnIndex = normalizeNullableNumber(target.turnIndex);
-    const indexedAt = normalizeNullableNumber(target.indexedAt);
-
-    if (
-      typeof target.toolCallId !== "string" ||
-      turnIndex === null ||
-      indexedAt === null ||
-      typeof target.summaryRef !== "string" ||
-      typeof target.replacementText !== "string"
-    ) {
-      return [];
-    }
-
-    return [{
-      toolCallId: target.toolCallId,
-      turnIndex,
-      indexedAt,
-      summaryRef: target.summaryRef,
-      replacementText: target.replacementText,
-    }];
-  });
-}
-
 function normalizeTurnSnapshot(value: unknown) {
   if (!isRecord(value)) {
     return {
@@ -230,7 +183,6 @@ function normalizeTurnSnapshot(value: unknown) {
       toolCount: 0,
       messageCountAfterTurn: 0,
       tokensKeptOutDelta: 0,
-      tokensSavedDelta: 0,
       timestamp: 0,
     };
   }
@@ -240,7 +192,6 @@ function normalizeTurnSnapshot(value: unknown) {
     toolCount: normalizeNumber(value.toolCount),
     messageCountAfterTurn: normalizeNumber(value.messageCountAfterTurn),
     tokensKeptOutDelta: normalizeNumber(value.tokensKeptOutDelta),
-    tokensSavedDelta: normalizeNumber(value.tokensSavedDelta),
     timestamp: normalizeNumber(value.timestamp),
   };
 }
@@ -272,7 +223,6 @@ function normalizeToolRecord(value: Record<string, unknown>): ToolRecord {
   return {
     toolCallId: typeof value.toolCallId === "string" ? value.toolCallId : "",
     toolName: typeof value.toolName === "string" ? value.toolName : "",
-    inputArgs: value.inputArgs,
     inputFingerprint: typeof value.inputFingerprint === "string" ? value.inputFingerprint : "",
     isError: typeof value.isError === "boolean" ? value.isError : false,
     turnIndex: normalizeNumber(value.turnIndex),
@@ -281,9 +231,6 @@ function normalizeToolRecord(value: Record<string, unknown>): ToolRecord {
     inferredFromContext: typeof value.inferredFromContext === "boolean" ? value.inferredFromContext : undefined,
     awaitingAuthoritativeTurn:
       typeof value.awaitingAuthoritativeTurn === "boolean" ? value.awaitingAuthoritativeTurn : undefined,
-    shapedContent: Array.isArray(value.shapedContent)
-      ? (value.shapedContent.filter(isRecord).map((block) => ({ ...block })) as unknown as ToolRecord["shapedContent"])
-      : undefined,
   };
 }
 
@@ -318,15 +265,9 @@ function hasSharedPersistedSessionStateFields(value: Record<string, unknown>): b
 }
 
 function hasOptionalPersistedSessionStateCompatFields(value: Record<string, unknown>): boolean {
-  return isOptionalArray(value.omitRanges)
-    && isOptionalFiniteNumber(value.lastIndexedTurn)
-    && isOptionalFiniteNumber(value.tokensKeptOutTotal)
-    && isOptionalFiniteNumber(value.tokensSaved)
+  return isOptionalFiniteNumber(value.tokensKeptOutTotal)
     && isOptionalRecord(value.tokensKeptOutByType)
-    && isOptionalRecord(value.tokensSavedByType)
     && isOptionalArray(value.toolCalls)
-    && isOptionalArray(value.prunedToolIds)
-    && isOptionalArray(value.pruneTargets)
     && isOptionalArray(value.countedSavingsIds)
     && isOptionalNullableFiniteNumber(value.lastContextTokens)
     && isOptionalNullableFiniteNumber(value.lastContextPercent)
