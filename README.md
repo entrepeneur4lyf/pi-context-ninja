@@ -11,7 +11,7 @@ per session. It never sees a compression workflow.
 ## Install
 
 ```bash
-omp install github:entrepeneur4lyf/pi-context-ninja
+omp install github:eas4ai/pi-context-ninja
 ```
 
 oh-my-pi discovers the extension through the `omp.extensions` manifest in
